@@ -63,8 +63,12 @@ void audio_buffer_sin_fill_stereo(AudioBuffer buff);
 #define CANVAS_WIDTH  800
 #define CANVAS_HEIGHT 600
 #define GAME_TITLE    "My Little Game"
+
 #ifdef PLATFORM_WINDOWS
 #   define GAME_TITLE_CLASS    "MyLittleGameClx"
+
+static BITMAPINFO s_Bmi = {0};
+
 #endif
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -74,6 +78,7 @@ static Olivec_Canvas canvas;
 #define MAIN int main
 
 MAIN() {
+
     AudioDevice* device = audio_init_device();
     AudioBuffer audio   = audio_buffer_create(SAMPLE_RATE * 10 * 2, NULL);
     
@@ -113,11 +118,30 @@ MAIN() {
 
     ShowWindow(hwnd, SW_SHOWNORMAL);
     UpdateWindow(hwnd);
-    
+
+    // setup bit map info structure
+    s_Bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+    s_Bmi.bmiHeader.biWidth       = CANVAS_WIDTH;
+    s_Bmi.bmiHeader.biHeight      = CANVAS_HEIGHT;
+    s_Bmi.bmiHeader.biPlanes      = 1;
+    s_Bmi.bmiHeader.biBitCount    = 32;
+    s_Bmi.bmiHeader.biCompression = BI_RGB;
+
+
+    HDC hdc     = GetDC(hwnd);
+    // mem Device Context
+    HDC memDC   = CreateCompatibleDC(hdc);
+    HDC clearDC = CreateCompatibleDC(hdc);
+
+    void* dibPixels;
+    HBITMAP hBitmap   = CreateDIBSection(hdc, &s_Bmi, DIB_RGB_COLORS, &dibPixels, NULL, 0);
+    HBITMAP oldBitmap = SelectObject(memDC, hBitmap);
+
     canvas = olivec_canvas(
-        malloc(CANVAS_WIDTH * CANVAS_HEIGHT * sizeof(uint32_t)), 
+        dibPixels,
         CANVAS_WIDTH, CANVAS_HEIGHT, CANVAS_WIDTH
     );
+
 
     MSG msg;
     int frame_count = 0;
@@ -125,6 +149,9 @@ MAIN() {
     }
     int x = 0;
     int y = 0;
+
+    HBRUSH winBlackBrush = CreateSolidBrush(RGB(0,0,0)); // black
+    RECT clearRect       = {0, 0, CANVAS_WIDTH, CANVAS_HEIGHT};
 
     while (1) {
         audio_buffer_play(&audio);
@@ -138,13 +165,45 @@ MAIN() {
         x += 20;
         y += 20;
 
-        olivec_fill(canvas, 0x00000000);
+        // BitBlt(
+        //     hdc,       // destination DC
+        //     0, 0,      // dest x, y
+        //     CANVAS_WIDTH, CANVAS_HEIGHT,
+        //     clearDC,     // source DC
+        //     0, 0,      // source x, y
+        //     SRCCOPY    // copy directly
+        // );
+
+        
+        FillRect(memDC, &clearRect, winBlackBrush);
+
+        // olivec_fill(canvas, 0x00000000);
         olivec_rect(canvas, x, y, 300, 300, 0xFFFF0000);
 
-        // Update canvas here...
-        InvalidateRect(hwnd, NULL, FALSE);
+        // memcpy(dibPixels, canvas.pixels, CANVAS_WIDTH * CANVAS_HEIGHT * 4);
+
+        BitBlt(
+            hdc,       // destination DC
+            0, 0,      // dest x, y
+            CANVAS_WIDTH, CANVAS_HEIGHT,
+            memDC,     // source DC
+            0, 0,      // source x, y
+            SRCCOPY    // copy directly
+        );
+
         Sleep(16);
     }
+
+
+    DeleteObject(winBlackBrush);
+
+    SelectObject(memDC, oldBitmap);
+    DeleteObject(hBitmap);
+
+    DeleteDC(memDC);
+    DeleteDC(clearDC);
+    
+    ReleaseDC(hwnd, hdc);
 
     getchar();
     printf("finished!\n");
@@ -315,31 +374,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
-        case WM_PAINT: {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd, &ps);
-
-            BITMAPINFO bmi;
-            ZeroMemory(&bmi, sizeof(BITMAPINFO));
-            bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth       = CANVAS_WIDTH;
-            bmi.bmiHeader.biHeight      = CANVAS_HEIGHT;
-            bmi.bmiHeader.biPlanes      = 1;
-            bmi.bmiHeader.biBitCount    = 32;
-            bmi.bmiHeader.biCompression = BI_RGB;
-
-            StretchDIBits(
-                hdc,
-                0, 0, CANVAS_WIDTH, CANVAS_HEIGHT,
-                0, 0, CANVAS_WIDTH, CANVAS_HEIGHT,
-                canvas.pixels,
-                &bmi,
-                DIB_RGB_COLORS,
-                SRCCOPY
-            );
-
-            EndPaint(hwnd, &ps);
-        } return 0;
     }
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
