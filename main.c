@@ -24,8 +24,17 @@ struct AudioBuffer_st {
 }; // struct AudioBuffer
 
 typedef struct AudioBuffer_st AudioBuffer;
+typedef struct AudioMixer_st  AudioMixer;
 
-int16_t      float_to_int16(float f);
+struct AudioMixer_st {
+    AudioDevice*  device;
+    AudioBuffer** audio_list;
+    size_t        count;
+};
+
+AudioDevice* audio_init_device();
+
+// audio buffer
 AudioBuffer  audio_buffer_create(size_t sample_count, AudioDevice* device);
 void         audio_buffer_free(AudioBuffer ab);
 void         audio_buffer_update(AudioBuffer* audio);
@@ -34,7 +43,13 @@ void         audio_buffer_pause(AudioBuffer* audio);
 void         audio_buffer_seek_start(AudioBuffer* audio);
 void         audio_buffer_seek(AudioBuffer* audio, size_t time);
 
-AudioDevice* audio_init_device();
+// audio mixer
+bool        audio_mixer_create(AudioMixer* mixer_out, size_t capacity, AudioDevice* device);
+void        audio_mixer_update(AudioMixer* mixer);
+
+// audio utilities
+int16_t      float_to_int16(float f);
+float        int16_to_float(int16_t v);
 
 static AudioDevice* s_audioDevice = NULL;
 
@@ -66,6 +81,7 @@ void CALLBACK audio_event_handler_win(HWAVEOUT h_waveOut, UINT uMsg, DWORD_PTR d
 // fills buffer with sin function samples.
 void audio_buffer_sin_fill_mono(AudioBuffer buff);
 void audio_buffer_sin_fill_stereo(AudioBuffer buff);
+void audio_buffer_sin_fill_stereo_low(AudioBuffer buff);
 
 #define CANVAS_WIDTH  600
 #define CANVAS_HEIGHT 600
@@ -82,14 +98,23 @@ static BITMAPINFO s_Bmi = {0};
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 static Olivec_Canvas canvas;
+AudioMixer mixer;
 
 #define MAIN int main
 
 MAIN() {
 
-    AudioDevice* device = audio_init_device();
-    AudioBuffer audio   = audio_buffer_create(SAMPLE_RATE / 2 * 2, NULL);
+    AudioDevice* device   = audio_init_device();
+    AudioBuffer audio     = audio_buffer_create(SAMPLE_RATE / 2 * 2, NULL);
+    AudioBuffer bg_song   = audio_buffer_create(SAMPLE_RATE * 10 * 2, NULL);
+
+    // mixer usage example:
+    audio_mixer_create(&mixer, 2, NULL);
+    mixer.audio_list[0] = &audio;
+    mixer.audio_list[1] = &bg_song;
+
     audio_buffer_sin_fill_stereo(audio);
+    audio_buffer_sin_fill_stereo_low(bg_song);
 
     HINSTANCE hInstance = GetModuleHandle(NULL);
 
@@ -158,7 +183,9 @@ MAIN() {
 
     float speedX = 400.f;
     float speedY = -400.f;
-
+    
+    audio_buffer_play(&bg_song);
+    
     while (1) {
         
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -207,7 +234,9 @@ MAIN() {
         //     SRCCOPY
         // );
 
-        audio_buffer_update(&audio);
+        
+        // audio_buffer_update(&bg_song);
+        audio_mixer_update(&mixer);
 
         Sleep(16);
     }
@@ -218,7 +247,7 @@ MAIN() {
     SelectObject(canvasDC, oldBitmap);
     DeleteObject(hBitmap);
 
-    DeleteDC(canvasDC);    
+    DeleteDC(canvasDC);
     ReleaseDC(hwnd, hdc);
 
     getchar();
@@ -259,6 +288,82 @@ void audio_buffer_seek(AudioBuffer* audio, size_t time) {
     audio->time = time;
 }
 
+
+bool audio_mixer_create(AudioMixer* mixer_out, size_t capacity, AudioDevice* device) {
+    if (!mixer_out) return false;
+    
+    mixer_out->count      = capacity;
+    mixer_out->audio_list = malloc(sizeof(mixer_out->audio_list[0]) * capacity);
+    mixer_out->device     = device != NULL ? device : s_audioDevice;
+
+    return mixer_out->audio_list != NULL;
+}
+
+void audio_mixer_update(AudioMixer* mixer) {
+    WAVEHDR* whdr         = &(s_Audio_WinHDRS[s_Audio_CurrentWHDR]);
+    HWAVEOUT device       = (HWAVEOUT)mixer->device;
+
+    while (whdr->dwFlags & WHDR_INQUEUE) { Sleep(1); }
+
+    int16_t* winAudioBuffer = (int16_t*) whdr->lpData;
+
+    for (size_t i = 0; i < AUDIO_BUFFERS_SIZE; ++i) {
+        float left_mixed  = 0.0f;
+        float right_mixed = 0.0f;
+
+        float sample_lc_sum = 0.0f;
+        float sample_rc_sum = 0.0f;
+
+        for (int a = 0; a < mixer->count; ++a) {
+            
+            float sample_left = 0.0f;
+            float sample_right = 0.0f;
+
+            // fetch sample value at index i for audio a
+            AudioBuffer* ab = mixer->audio_list[a];
+            if (!ab->playing) continue;
+
+            size_t sample_idx = 2 * (i + ab->time);
+            if (sample_idx < ab->size) {
+                sample_left  = int16_to_float(ab->buffer[sample_idx + 0]);
+                sample_right = int16_to_float(ab->buffer[sample_idx + 1]);
+            }
+
+            sample_lc_sum += sample_left;
+            sample_rc_sum += sample_right;
+        }
+
+        float lc_factor = 1.0f / sample_lc_sum;
+        float rc_factor = 1.0f / sample_rc_sum;
+
+        for (int a = 0; a < mixer->count; ++a) {
+            float sample_left  = 0.0f;
+            float sample_right = 0.0f;
+
+            // fetch sample value at index i for audio a
+            AudioBuffer* ab = mixer->audio_list[a];
+            size_t sample_idx = 2 * (i + ab->time);
+            if (sample_idx < ab->size) {
+                sample_left  = int16_to_float(ab->buffer[sample_idx + 0]);
+                sample_right = int16_to_float(ab->buffer[sample_idx + 1]);
+            }
+
+            left_mixed  += sample_left  * lc_factor;
+            right_mixed += sample_right * rc_factor;
+
+            ab->time    += AUDIO_BUFFERS_SIZE;
+        }
+
+        printf("setting %.3f\n", left_mixed);
+
+        winAudioBuffer[2*i + 0] = float_to_int16(left_mixed);
+        winAudioBuffer[2*i + 1] = float_to_int16(right_mixed);
+    }
+
+    whdr->dwBufferLength  = 2 * AUDIO_BUFFERS_SIZE * sizeof(int16_t);
+    waveOutWrite(device, whdr, sizeof(WAVEHDR));
+    s_Audio_CurrentWHDR = (s_Audio_CurrentWHDR + 1) % AUDIO_BUFFERS;
+}
 
 void audio_buffer_update(AudioBuffer* audio) {
     if (!audio || !audio->playing) return;
@@ -334,6 +439,16 @@ AudioDevice* audio_init_device() {
 #   error "audio_init_device() not implemented for current OS."
 #endif // ifdef PLATFORM_WINDOWS
 
+void audio_buffer_sin_fill_stereo_low(AudioBuffer buff) {
+    float Dt        = 1.0f / SAMPLE_RATE;
+    size_t samples  = buff.size / 2;
+
+    for (size_t i = 0; i < samples; ++i) {
+        buff.buffer[2*i + 0] = float_to_int16(.33333f * sin(2 * M_PI * i * Dt * 130.81f));
+        buff.buffer[2*i + 1] = float_to_int16(.33333f * sin(2 * M_PI * i * Dt * 130.81f));
+    }
+}
+
 void audio_buffer_sin_fill_stereo(AudioBuffer buff) {
     float Dt        = 1.0f / SAMPLE_RATE;
     size_t samples  = buff.size / 2;
@@ -368,6 +483,11 @@ void audio_buffer_sin_fill_mono(AudioBuffer buff) {
     for (size_t i = 0; i < buff.size / 2; ++i) {
         buff.buffer[i + buff.size / 2] = float_to_int16(1.0f * sin(2 * M_PI * i * Dt * 2*261.6f));
     }
+}
+
+float int16_to_float(int16_t v)
+{
+    return ((float) v) / 32767.0f;
 }
 
 int16_t float_to_int16(float f)
