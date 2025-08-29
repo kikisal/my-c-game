@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <inttypes.h>
 #include <math.h>
+#include <stdbool.h>
 
 #define OLIVEC_IMPLEMENTATION
 #include "deps/olivec/olive.c"
@@ -19,6 +20,7 @@ struct AudioBuffer_st {
     size_t       size;
     AudioDevice* device;
     size_t       time;
+    bool         playing;
 }; // struct AudioBuffer
 
 typedef struct AudioBuffer_st AudioBuffer;
@@ -26,7 +28,12 @@ typedef struct AudioBuffer_st AudioBuffer;
 int16_t      float_to_int16(float f);
 AudioBuffer  audio_buffer_create(size_t sample_count, AudioDevice* device);
 void         audio_buffer_free(AudioBuffer ab);
+void         audio_buffer_update(AudioBuffer* audio);
 void         audio_buffer_play(AudioBuffer* audio);
+void         audio_buffer_pause(AudioBuffer* audio);
+void         audio_buffer_seek_start(AudioBuffer* audio);
+void         audio_buffer_seek(AudioBuffer* audio, size_t time);
+
 AudioDevice* audio_init_device();
 
 static AudioDevice* s_audioDevice = NULL;
@@ -40,7 +47,7 @@ static AudioDevice* s_audioDevice = NULL;
 #define AUDIO_SAMPLES_PER_FRAME SAMPLE_RATE / FPS 
 
 #define AUDIO_BUFFERS      4
-#define AUDIO_BUFFERS_SIZE 4 * AUDIO_SAMPLES_PER_FRAME
+#define AUDIO_BUFFERS_SIZE 2 * AUDIO_SAMPLES_PER_FRAME
 
 static int16_t* s_audioBuffers[AUDIO_BUFFERS];
 
@@ -60,8 +67,9 @@ void CALLBACK audio_event_handler_win(HWAVEOUT h_waveOut, UINT uMsg, DWORD_PTR d
 void audio_buffer_sin_fill_mono(AudioBuffer buff);
 void audio_buffer_sin_fill_stereo(AudioBuffer buff);
 
-#define CANVAS_WIDTH  800
+#define CANVAS_WIDTH  600
 #define CANVAS_HEIGHT 600
+
 #define GAME_TITLE    "My Little Game"
 
 #ifdef PLATFORM_WINDOWS
@@ -80,8 +88,7 @@ static Olivec_Canvas canvas;
 MAIN() {
 
     AudioDevice* device = audio_init_device();
-    AudioBuffer audio   = audio_buffer_create(SAMPLE_RATE * 10 * 2, NULL);
-    
+    AudioBuffer audio   = audio_buffer_create(SAMPLE_RATE / 2 * 2, NULL);
     audio_buffer_sin_fill_stereo(audio);
 
     HINSTANCE hInstance = GetModuleHandle(NULL);
@@ -117,12 +124,11 @@ MAIN() {
     }
 
     ShowWindow(hwnd, SW_SHOWNORMAL);
-    UpdateWindow(hwnd);
 
     // setup bit map info structure
     s_Bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
     s_Bmi.bmiHeader.biWidth       = CANVAS_WIDTH;
-    s_Bmi.bmiHeader.biHeight      = CANVAS_HEIGHT;
+    s_Bmi.bmiHeader.biHeight      = -CANVAS_HEIGHT;
     s_Bmi.bmiHeader.biPlanes      = 1;
     s_Bmi.bmiHeader.biBitCount    = 32;
     s_Bmi.bmiHeader.biCompression = BI_RGB;
@@ -130,66 +136,78 @@ MAIN() {
 
     HDC hdc     = GetDC(hwnd);
     // mem Device Context
-    HDC memDC   = CreateCompatibleDC(hdc);
-    HDC clearDC = CreateCompatibleDC(hdc);
+    HDC canvasDC   = CreateCompatibleDC(hdc);
 
     void* dibPixels;
     HBITMAP hBitmap   = CreateDIBSection(hdc, &s_Bmi, DIB_RGB_COLORS, &dibPixels, NULL, 0);
-    HBITMAP oldBitmap = SelectObject(memDC, hBitmap);
+    HBITMAP oldBitmap = SelectObject(canvasDC, hBitmap);
 
     canvas = olivec_canvas(
         dibPixels,
         CANVAS_WIDTH, CANVAS_HEIGHT, CANVAS_WIDTH
     );
 
-
     MSG msg;
     int frame_count = 0;
-    for (int i = 0; i < 300; ++i) {
-    }
-    int x = 0;
-    int y = 0;
-
+    
     HBRUSH winBlackBrush = CreateSolidBrush(RGB(0,0,0)); // black
     RECT clearRect       = {0, 0, CANVAS_WIDTH, CANVAS_HEIGHT};
+    
+    float x = 10.0f;
+    float y = 300.0f;
+
+    float speedX = 400.f;
+    float speedY = -400.f;
 
     while (1) {
-        audio_buffer_play(&audio);
-
+        
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) return 0;
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
         
-        x += 20;
-        y += 20;
+        x += (speedX * 1.0f/60.0f);
+        y += (speedY * 1.0f/60.0f);
+
+        if (y <= 0 || y + 40 >= CANVAS_HEIGHT) speedY = -speedY;
+        if (y <= 0) y = 0;
+        if (y + 40 >= CANVAS_HEIGHT) y = CANVAS_HEIGHT - 40;
+
+        if (x <= 0 || x + 40 >= CANVAS_WIDTH) speedX = -speedX;
+        if (x <= 0) x = 0;
+        if (x + 40 >= CANVAS_WIDTH) x = CANVAS_WIDTH - 40;
+        
+        if (y <= 0 || y + 40 >= CANVAS_HEIGHT || x <= 0 || x + 40 >= CANVAS_WIDTH) {
+            audio_buffer_seek_start(&audio);
+            audio_buffer_play(&audio);
+        }
+        
+        FillRect(canvasDC, &clearRect, winBlackBrush);
+        olivec_rect(canvas, (int)x, (int)y, 40, 40, 0xFFFF0000);
+
+        // memcpy(dibPixels, canvas.pixels, CANVAS_WIDTH * CANVAS_HEIGHT * 4);
+
+        StretchBlt(
+            hdc,
+            0, 0,
+            CANVAS_WIDTH, CANVAS_HEIGHT,
+            canvasDC,
+            0, 0,
+            CANVAS_WIDTH, CANVAS_HEIGHT,
+            SRCCOPY
+        );
 
         // BitBlt(
         //     hdc,       // destination DC
         //     0, 0,      // dest x, y
         //     CANVAS_WIDTH, CANVAS_HEIGHT,
-        //     clearDC,     // source DC
-        //     0, 0,      // source x, y
-        //     SRCCOPY    // copy directly
+        //     canvasDC,     // source DC
+        //     0, 0,      // source x, y,
+        //     SRCCOPY
         // );
 
-        
-        FillRect(memDC, &clearRect, winBlackBrush);
-
-        // olivec_fill(canvas, 0x00000000);
-        olivec_rect(canvas, x, y, 300, 300, 0xFFFF0000);
-
-        // memcpy(dibPixels, canvas.pixels, CANVAS_WIDTH * CANVAS_HEIGHT * 4);
-
-        BitBlt(
-            hdc,       // destination DC
-            0, 0,      // dest x, y
-            CANVAS_WIDTH, CANVAS_HEIGHT,
-            memDC,     // source DC
-            0, 0,      // source x, y
-            SRCCOPY    // copy directly
-        );
+        audio_buffer_update(&audio);
 
         Sleep(16);
     }
@@ -197,12 +215,10 @@ MAIN() {
 
     DeleteObject(winBlackBrush);
 
-    SelectObject(memDC, oldBitmap);
+    SelectObject(canvasDC, oldBitmap);
     DeleteObject(hBitmap);
 
-    DeleteDC(memDC);
-    DeleteDC(clearDC);
-    
+    DeleteDC(canvasDC);    
     ReleaseDC(hwnd, hdc);
 
     getchar();
@@ -220,6 +236,7 @@ AudioBuffer audio_buffer_create(size_t sample_count, AudioDevice* device) {
         .size    = sample_count,
         .device  = device == NULL ? s_audioDevice : device,
         .time    = 0,
+        .playing = false
     };
 
     ab.buffer = malloc(sample_count * sizeof(*ab.buffer));
@@ -232,34 +249,34 @@ void audio_buffer_free(AudioBuffer ab) {
     if (ab.buffer) free(ab.buffer);
 }
 
-void audio_buffer_play(AudioBuffer* audio) {
-    if (!audio->device) return;
+void audio_buffer_seek_start(AudioBuffer* audio) {
+    if (!audio) return;
+    audio->time = 0;
+}
+
+void audio_buffer_seek(AudioBuffer* audio, size_t time) {
+    if (!audio) return;
+    audio->time = time;
+}
+
+
+void audio_buffer_update(AudioBuffer* audio) {
+    if (!audio || !audio->playing) return;
 
     if (audio->time * 2 >= audio->size) {
-        printf("no more samples to stream.\n");
+        // printf("no more samples to stream.\n");
         return;
     }
 
-    size_t audio_samples = 4 * AUDIO_SAMPLES_PER_FRAME;
+    size_t audio_samples = AUDIO_BUFFERS_SIZE;
     if (2*(audio->time + audio_samples) >= audio->size)
         audio_samples = (audio->size/2) - audio->time;
 
-
-fetch_header:
     // Prepare buffer
     WAVEHDR* whdr         = &(s_Audio_WinHDRS[s_Audio_CurrentWHDR]);
     HWAVEOUT device       = (HWAVEOUT)audio->device;
 
-    int wait_count = 0;
-    while (whdr->dwFlags & WHDR_INQUEUE) {
-        if (wait_count >= 100) {
-            s_Audio_CurrentWHDR = (s_Audio_CurrentWHDR + 1) % AUDIO_BUFFERS;
-            goto fetch_header;    
-        }
-
-        Sleep(1);
-        ++wait_count;
-    }
+    while (whdr->dwFlags & WHDR_INQUEUE) { Sleep(1); }
 
     memcpy(whdr->lpData, audio->buffer + 2 * audio->time, audio_samples * 2 * sizeof(int16_t));
     
@@ -269,6 +286,16 @@ fetch_header:
     audio->time += audio_samples;
 
     s_Audio_CurrentWHDR = (s_Audio_CurrentWHDR + 1) % AUDIO_BUFFERS;
+}
+
+void audio_buffer_play(AudioBuffer* audio) {
+    if (!audio->device) return;
+    audio->playing = true;
+}
+
+void audio_buffer_pause(AudioBuffer* audio) {
+    if (!audio->device) return;
+    audio->playing = false;
 }
 
 #ifdef PLATFORM_WINDOWS
