@@ -11,7 +11,6 @@
 #   define M_PI 3.14159265
 #endif
 
-#define SAMPLE_RATE 44100
 
 typedef struct AudioDevice_st AudioDevice;
 
@@ -19,16 +18,38 @@ struct AudioBuffer_st {
     int16_t*     buffer;
     size_t       size;
     AudioDevice* device;
+    size_t       time;
 }; // struct AudioBuffer
 
 typedef struct AudioBuffer_st AudioBuffer;
 
-int16_t     float_to_int16(float f);
-AudioBuffer audio_buffer_create(size_t sample_count, AudioDevice* device);
-void        audio_buffer_free(AudioBuffer ab);
-void        audio_buffer_play(AudioBuffer audio);
+int16_t      float_to_int16(float f);
+AudioBuffer  audio_buffer_create(size_t sample_count, AudioDevice* device);
+void         audio_buffer_free(AudioBuffer ab);
+void         audio_buffer_play(AudioBuffer* audio);
+AudioDevice* audio_init_device();
+
+static AudioDevice* s_audioDevice = NULL;
 
 #define PLATFORM_WINDOWS
+
+
+#define AUDIO_CHANNELS          2
+#define SAMPLE_RATE             44100
+#define FPS                     60
+#define AUDIO_SAMPLES_PER_FRAME SAMPLE_RATE / FPS 
+
+#define AUDIO_BUFFERS      4
+#define AUDIO_BUFFERS_SIZE 4 * AUDIO_SAMPLES_PER_FRAME
+
+static int16_t* s_audioBuffers[AUDIO_BUFFERS];
+
+#ifdef PLATFORM_WINDOWS
+
+static int     s_Audio_CurrentWHDR = 0;
+static WAVEHDR s_Audio_WinHDRS[AUDIO_BUFFERS];
+
+#endif // PLATFORM_WINDOWS
 
 #ifdef PLATFORM_WINDOWS
 void CALLBACK audio_event_handler_win(HWAVEOUT h_waveOut, UINT uMsg, DWORD_PTR dwInstance,
@@ -42,30 +63,36 @@ void audio_buffer_sin_fill_stereo(AudioBuffer buff);
 #define CANVAS_WIDTH  800
 #define CANVAS_HEIGHT 600
 #define GAME_TITLE    "My Little Game"
+#ifdef PLATFORM_WINDOWS
+#   define GAME_TITLE_CLASS    "MyLittleGameClx"
+#endif
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 static Olivec_Canvas canvas;
 
+#define MAIN int main
 
-int main() {
+MAIN() {
+    AudioDevice* device = audio_init_device();
+    AudioBuffer audio   = audio_buffer_create(SAMPLE_RATE * 10 * 2, NULL);
+    
+    audio_buffer_sin_fill_stereo(audio);
 
     HINSTANCE hInstance = GetModuleHandle(NULL);
 
     WNDCLASS wc      = {0};
     wc.lpfnWndProc   = WindowProc;
     wc.hInstance     = hInstance;
-    wc.lpszClassName = GAME_TITLE;
+    wc.lpszClassName = GAME_TITLE_CLASS;
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
 
     if (!RegisterClass(&wc)) return -1;
-
-    // Adjust window size to fit client area
   
     HWND hwnd = CreateWindowEx(
         0,
+        GAME_TITLE_CLASS,
         GAME_TITLE,
-        "Canvas Window",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT,
         CANVAS_WIDTH,
@@ -86,7 +113,6 @@ int main() {
 
     ShowWindow(hwnd, SW_SHOWNORMAL);
     UpdateWindow(hwnd);
-
     
     canvas = olivec_canvas(
         malloc(CANVAS_WIDTH * CANVAS_HEIGHT * sizeof(uint32_t)), 
@@ -94,60 +120,47 @@ int main() {
     );
 
     MSG msg;
+    int frame_count = 0;
+    for (int i = 0; i < 300; ++i) {
+    }
+    int x = 0;
+    int y = 0;
+
     while (1) {
+        audio_buffer_play(&audio);
+
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) return 0;
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
+        
+        x += 20;
+        y += 20;
 
-        olivec_rect(canvas, 0, 0, 300, 300, 0xFF00FFFF);
+        olivec_fill(canvas, 0x00000000);
+        olivec_rect(canvas, x, y, 300, 300, 0xFFFF0000);
 
         // Update canvas here...
         InvalidateRect(hwnd, NULL, FALSE);
         Sleep(16);
     }
 
-
-
-    // Open audio device
-    HWAVEOUT hWaveOut;
-    WAVEFORMATEX wfx    = {0};
-    wfx.wFormatTag      = WAVE_FORMAT_PCM;
-    wfx.nChannels       = 2;                // mono
-    wfx.nSamplesPerSec  = SAMPLE_RATE;      // sample rate
-    wfx.wBitsPerSample  = 16;               // int16_t = 16 bits
-    wfx.nBlockAlign     = wfx.nChannels * wfx.wBitsPerSample / 8;
-    wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign;
-
-    if (waveOutOpen(&hWaveOut, WAVE_MAPPER, &wfx, (DWORD_PTR)audio_event_handler_win, 0, CALLBACK_FUNCTION) != MMSYSERR_NOERROR) {
-        printf("Failed to open audio device.\n");
-        return 1;
-    }
-
-    AudioBuffer audio = audio_buffer_create(SAMPLE_RATE * 10 * 2, (AudioDevice*)hWaveOut);
-    audio_buffer_sin_fill_stereo(audio);
-
-    audio_buffer_play(audio);
-
-
-    // displayPixels();
-
     getchar();
     printf("finished!\n");
-    waveOutClose(hWaveOut);
 
+    waveOutClose((HWAVEOUT) device);
     audio_buffer_free(audio);
 
     return 0;
 }
 
-
 AudioBuffer audio_buffer_create(size_t sample_count, AudioDevice* device) {
     AudioBuffer ab = (AudioBuffer) {
         .buffer  = NULL,
         .size    = sample_count,
-        .device  = device
+        .device  = device == NULL ? s_audioDevice : device,
+        .time    = 0,
     };
 
     ab.buffer = malloc(sample_count * sizeof(*ab.buffer));
@@ -160,20 +173,80 @@ void audio_buffer_free(AudioBuffer ab) {
     if (ab.buffer) free(ab.buffer);
 }
 
-void audio_buffer_play(AudioBuffer audio) {
-    if (!audio.device) return;
+void audio_buffer_play(AudioBuffer* audio) {
+    if (!audio->device) return;
 
+    if (audio->time * 2 >= audio->size) {
+        printf("no more samples to stream.\n");
+        return;
+    }
+
+    size_t audio_samples = 4 * AUDIO_SAMPLES_PER_FRAME;
+    if (2*(audio->time + audio_samples) >= audio->size)
+        audio_samples = (audio->size/2) - audio->time;
+
+
+fetch_header:
     // Prepare buffer
-    WAVEHDR* whdr    = calloc(1, sizeof(WAVEHDR));
-    HWAVEOUT device  = (HWAVEOUT)audio.device;
-    
-    whdr->lpData          = (LPSTR)audio.buffer;
-    whdr->dwBufferLength  = audio.size * sizeof(int16_t);
-    whdr->dwFlags         = 0;
+    WAVEHDR* whdr         = &(s_Audio_WinHDRS[s_Audio_CurrentWHDR]);
+    HWAVEOUT device       = (HWAVEOUT)audio->device;
 
-    waveOutPrepareHeader(device, whdr, sizeof(WAVEHDR));
+    int wait_count = 0;
+    while (whdr->dwFlags & WHDR_INQUEUE) {
+        if (wait_count >= 100) {
+            s_Audio_CurrentWHDR = (s_Audio_CurrentWHDR + 1) % AUDIO_BUFFERS;
+            goto fetch_header;    
+        }
+
+        Sleep(1);
+        ++wait_count;
+    }
+
+    memcpy(whdr->lpData, audio->buffer + 2 * audio->time, audio_samples * 2 * sizeof(int16_t));
+    
+    whdr->dwBufferLength  = 2 * audio_samples * sizeof(int16_t);
+
     waveOutWrite(device, whdr, sizeof(WAVEHDR));
+    audio->time += audio_samples;
+
+    s_Audio_CurrentWHDR = (s_Audio_CurrentWHDR + 1) % AUDIO_BUFFERS;
 }
+
+#ifdef PLATFORM_WINDOWS
+
+AudioDevice* audio_init_device() {
+    // Open audio device
+    HWAVEOUT hWaveOut;
+    WAVEFORMATEX wfx    = {0};
+    wfx.wFormatTag      = WAVE_FORMAT_PCM;
+    wfx.nChannels       = AUDIO_CHANNELS;
+    wfx.nSamplesPerSec  = SAMPLE_RATE;
+    wfx.wBitsPerSample  = 16;
+    wfx.nBlockAlign     = wfx.nChannels * wfx.wBitsPerSample / 8;
+    wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign;
+
+    if (waveOutOpen(&hWaveOut, WAVE_MAPPER, &wfx, (DWORD_PTR)audio_event_handler_win, 0, CALLBACK_FUNCTION) != MMSYSERR_NOERROR) {
+        printf("Failed to open audio device.\n");
+        return NULL;
+    }
+
+    s_audioDevice = (AudioDevice*) hWaveOut;
+
+    for (int i = 0; i < AUDIO_BUFFERS; ++i) {
+        s_audioBuffers[i]                 = calloc(AUDIO_BUFFERS_SIZE * AUDIO_CHANNELS, sizeof(int16_t));
+
+        s_Audio_WinHDRS[i].lpData         = (LPSTR) s_audioBuffers[i];
+        s_Audio_WinHDRS[i].dwBufferLength = AUDIO_BUFFERS_SIZE * AUDIO_CHANNELS * sizeof(int16_t);
+        s_Audio_WinHDRS[i].dwFlags        = 0;
+
+        waveOutPrepareHeader((HWAVEOUT)s_audioDevice, &s_Audio_WinHDRS[i], sizeof(WAVEHDR));
+    }
+
+    return (AudioDevice*) hWaveOut;
+}
+#else
+#   error "audio_init_device() not implemented for current OS."
+#endif // ifdef PLATFORM_WINDOWS
 
 void audio_buffer_sin_fill_stereo(AudioBuffer buff) {
     float Dt        = 1.0f / SAMPLE_RATE;
@@ -229,11 +302,9 @@ void CALLBACK audio_event_handler_win(
 {
     switch (uMsg) {
         case WOM_DONE: {
-            printf("audio_event_handler(): handling WOM_DONE Event.\n");
             WAVEHDR* pHdr = (WAVEHDR*)dwParam1;
-            waveOutUnprepareHeader(h_waveOut, pHdr, sizeof(WAVEHDR));
-            free(pHdr);         // free header
 
+            pHdr->dwFlags &= ~WHDR_INQUEUE;
             break;
         }
     }
@@ -252,7 +323,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             ZeroMemory(&bmi, sizeof(BITMAPINFO));
             bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
             bmi.bmiHeader.biWidth       = CANVAS_WIDTH;
-            bmi.bmiHeader.biHeight      = -CANVAS_HEIGHT;
+            bmi.bmiHeader.biHeight      = CANVAS_HEIGHT;
             bmi.bmiHeader.biPlanes      = 1;
             bmi.bmiHeader.biBitCount    = 32;
             bmi.bmiHeader.biCompression = BI_RGB;

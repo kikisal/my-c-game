@@ -1,5 +1,5 @@
 {
     "deps": {
-        "olive.c": "undetermied"
+        "olivec": "https://github.com/tsoding/olive.c"
     }
 }
