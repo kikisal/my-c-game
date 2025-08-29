@@ -4,11 +4,12 @@
 #include <inttypes.h>
 #include <math.h>
 
+#define OLIVEC_IMPLEMENTATION
+#include "deps/olivec/olive.c"
+
 #ifndef M_PI
 #   define M_PI 3.14159265
 #endif
-
-#pragma comment(lib, "winmm.lib")
 
 #define SAMPLE_RATE 44100
 
@@ -22,10 +23,10 @@ struct AudioBuffer_st {
 
 typedef struct AudioBuffer_st AudioBuffer;
 
-int16_t float_to_int16(float f);
+int16_t     float_to_int16(float f);
 AudioBuffer audio_buffer_create(size_t sample_count, AudioDevice* device);
-void audio_buffer_free(AudioBuffer ab);
-void audio_buffer_play(AudioBuffer audio);
+void        audio_buffer_free(AudioBuffer ab);
+void        audio_buffer_play(AudioBuffer audio);
 
 #define PLATFORM_WINDOWS
 
@@ -38,7 +39,76 @@ void CALLBACK audio_event_handler_win(HWAVEOUT h_waveOut, UINT uMsg, DWORD_PTR d
 void audio_buffer_sin_fill_mono(AudioBuffer buff);
 void audio_buffer_sin_fill_stereo(AudioBuffer buff);
 
+#define CANVAS_WIDTH  800
+#define CANVAS_HEIGHT 600
+#define GAME_TITLE    "My Little Game"
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+static Olivec_Canvas canvas;
+
+
 int main() {
+
+    HINSTANCE hInstance = GetModuleHandle(NULL);
+
+    WNDCLASS wc      = {0};
+    wc.lpfnWndProc   = WindowProc;
+    wc.hInstance     = hInstance;
+    wc.lpszClassName = GAME_TITLE;
+    wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
+
+    if (!RegisterClass(&wc)) return -1;
+
+    // Adjust window size to fit client area
+  
+    HWND hwnd = CreateWindowEx(
+        0,
+        GAME_TITLE,
+        "Canvas Window",
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT,
+        CANVAS_WIDTH,
+        CANVAS_HEIGHT,
+        NULL, NULL,
+        hInstance,
+        NULL
+    );
+
+    if (!hwnd) {
+        DWORD err = GetLastError();
+        char buf[256];
+        sprintf(buf, "CreateWindowEx failed with error %lu", err);
+        MessageBox(NULL, buf, "Error", MB_ICONERROR);
+
+        return -1;
+    }
+
+    ShowWindow(hwnd, SW_SHOWNORMAL);
+    UpdateWindow(hwnd);
+
+    
+    canvas = olivec_canvas(
+        malloc(CANVAS_WIDTH * CANVAS_HEIGHT * sizeof(uint32_t)), 
+        CANVAS_WIDTH, CANVAS_HEIGHT, CANVAS_WIDTH
+    );
+
+    MSG msg;
+    while (1) {
+        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) return 0;
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+
+        olivec_rect(canvas, 0, 0, 300, 300, 0xFF00FFFF);
+
+        // Update canvas here...
+        InvalidateRect(hwnd, NULL, FALSE);
+        Sleep(16);
+    }
+
+
 
     // Open audio device
     HWAVEOUT hWaveOut;
@@ -59,6 +129,9 @@ int main() {
     audio_buffer_sin_fill_stereo(audio);
 
     audio_buffer_play(audio);
+
+
+    // displayPixels();
 
     getchar();
     printf("finished!\n");
@@ -165,4 +238,39 @@ void CALLBACK audio_event_handler_win(
         }
     }
 }
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    switch (uMsg) {
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+
+            BITMAPINFO bmi;
+            ZeroMemory(&bmi, sizeof(BITMAPINFO));
+            bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+            bmi.bmiHeader.biWidth       = CANVAS_WIDTH;
+            bmi.bmiHeader.biHeight      = -CANVAS_HEIGHT;
+            bmi.bmiHeader.biPlanes      = 1;
+            bmi.bmiHeader.biBitCount    = 32;
+            bmi.bmiHeader.biCompression = BI_RGB;
+
+            StretchDIBits(
+                hdc,
+                0, 0, CANVAS_WIDTH, CANVAS_HEIGHT,
+                0, 0, CANVAS_WIDTH, CANVAS_HEIGHT,
+                canvas.pixels,
+                &bmi,
+                DIB_RGB_COLORS,
+                SRCCOPY
+            );
+
+            EndPaint(hwnd, &ps);
+        } return 0;
+    }
+    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+}
+
 #endif
