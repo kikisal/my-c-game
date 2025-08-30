@@ -284,8 +284,8 @@ void audio_buffer_sin_fill_stereo_low(AudioBuffer buff) {
     size_t samples  = buff.size / 2;
 
     for (size_t i = 0; i < samples; ++i) {
-        buff.buffer[2*i + 0] = float_to_int16(.5f * sin(2 * M_PI * i * Dt * 3*130.81f));
-        buff.buffer[2*i + 1] = float_to_int16(.5f * sin(2 * M_PI * i * Dt * 3*130.81f));
+        buff.buffer[2*i + 0] = float_to_int16(.5f * sin(2 * M_PI * i * Dt * 4*130.81f));
+        buff.buffer[2*i + 1] = float_to_int16(.5f * sin(2 * M_PI * i * Dt * 4*130.81f));
     }
 }
 
