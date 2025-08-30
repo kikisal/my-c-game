@@ -6,7 +6,7 @@
 #include <inttypes.h>
 
 #define OPENGL_MAJOR_VERSION 4
-#define OPENGL_MINOR_VERSION 1
+#define OPENGL_MINOR_VERSION 4
 
 #define GAME_TITLE              "My Little Game"
 #define CANVAS_WIDTH            600

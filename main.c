@@ -53,14 +53,14 @@ static Olivec_Canvas canvas;
 
 // simple shader sources
 const char* vs_src =
-    "#version 410 core\n"
+    "#version 440 core\n"
     "layout(location = 0) in vec2 aPos;\n"
     "void main() {\n"
     "    gl_Position = vec4(aPos, 0.0, 1.0);\n"
     "}\n";
 
 const char* fs_src =
-    "#version 410 core\n"
+    "#version 440 core\n"
     "out vec4 FragColor;\n"
     "void main() {\n"
     "    FragColor = vec4(0.2, 0.7, 1.0, 1.0);\n"
@@ -109,8 +109,6 @@ int main() {
 
     game_init(canvas);
     int sleepDelay = (int)((1.0f/(float)FPS)*1000.0f);
-
-
 
     glViewport(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 #if defined(_WIN32)

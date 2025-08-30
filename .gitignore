@@ -1,1 +1,5 @@
+.vscode
 deps
+*.o
+*.exe
+build
