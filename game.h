@@ -1,25 +1,21 @@
 #ifndef GAME_H
 #define GAME_H
 
+#define OLIVECDEF extern
+#include "deps/olivec/olive.c"
 #include <inttypes.h>
 
-typedef struct Game_st Game;
+#define CANVAS_WIDTH            600
+#define CANVAS_HEIGHT           600
 
-struct Game_st {
-    size_t    fps;
-    
-    // 
-    uint32_t* pixels;
-    size_t    display_width;
-    size_t    display_height;
-    
-    size_t    sample_rate;
-    size_t    audio_channels;
-    int16_t*  audio;
-};
+#define AUDIO_CHANNELS          2
+#define SAMPLE_RATE             44100
+#define FPS                     60
 
-Game game_init(void);
-void game_update(void);
+
+void game_init(Olivec_Canvas canvas);
+void game_update(Olivec_Canvas canvas);
+void game_close(void);
 void game_key_up(int key);
 void game_key_down(int key);
 

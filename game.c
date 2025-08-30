@@ -1,39 +1,72 @@
 #include "game.h"
+#include "audio.h"
 #include <assert.h>
+#include <stdio.h>
+#include "deps/olivec/olive.c"
 
-#define DISPLAY_WIDTH     800
-#define DISPLAY_HEIGHT    600
-#define GAME_FPS          60
-#define AUDIO_SAMPLE_RATE 44100
-#define AUDIO_CHANNELS    2
+float x = 10.0f;
+float y = 300.0f;
 
-static_assert(AUDIO_SAMPLE_RATE%GAME_FPS == 0, "Sample rate must be divisible by FPS");
+float speedX = 1000.f;
+float speedY = -1000.f;
 
-#define AUDIO_SAMPLES     (AUDIO_SAMPLE_RATE/GAME_FPS) * AUDIO_CHANNELS
+AudioBuffer audio;
+AudioBuffer bg_song;
+AudioMixer mixer;
 
-static uint32_t g_Pixels    [DISPLAY_WIDTH * DISPLAY_HEIGHT];
-static int16_t g_audioBuffer[AUDIO_SAMPLES];
+void game_init(Olivec_Canvas canvas) {
+    audio   = audio_buffer_create(SAMPLE_RATE / 2  * AUDIO_CHANNELS, NULL);
+    bg_song = audio_buffer_create(SAMPLE_RATE * 10 * AUDIO_CHANNELS, NULL);
 
-Game game_init(void) {
-    return (Game) {
-        .fps            = GAME_FPS,
-        .pixels         = g_Pixels,
-        .display_width  = DISPLAY_WIDTH,
-        .display_height = DISPLAY_HEIGHT,
-        .sample_rate    = AUDIO_SAMPLE_RATE,
-        .audio_channels = AUDIO_CHANNELS,
-        .audio          = g_audioBuffer,
-    };
+    // mixer usage example:
+    audio_mixer_create(&mixer, 2, NULL);
+
+    // -- Add as many audio tracks as you want in the mixer. --
+    mixer.audio_list[0] = &audio;
+    mixer.audio_list[1] = &bg_song;
+
+    audio_buffer_sin_fill_stereo(audio);
+    audio_buffer_sin_fill_stereo_low(bg_song);
+
+    audio_buffer_play(&bg_song);
+    
+    // x = canvas.width - 40;
+    // y = 0;
 }
 
-void game_update(void) {
-    TODO("game_update");
+void game_update(Olivec_Canvas canvas) {
+
+    olivec_rect(canvas, (int)x, (int)y, 40, 40, 0xFFFF0000);
+
+    x += (speedX * 1.0f/60.0f);
+    y += (speedY * 1.0f/60.0f);
+
+    if (y <= 0 || y + 40 >= CANVAS_HEIGHT) speedY = -speedY;
+    if (y <= 0) y = 0;
+    if (y + 40 >= CANVAS_HEIGHT) y = CANVAS_HEIGHT - 40;
+
+    if (x <= 0 || x + 40 >= CANVAS_WIDTH) speedX = -speedX;
+    if (x <= 0) x = 0;
+
+    if (x + 40 >= CANVAS_WIDTH) x = CANVAS_WIDTH - 40;
+
+    
+    if (y <= 0 || y + 40 >= CANVAS_HEIGHT || x <= 0 || x + 40 >= CANVAS_WIDTH) {
+        audio_buffer_seek_start(&audio);
+        audio_buffer_play(&audio);
+    }
+
+    audio_mixer_update(&mixer);
+}
+
+void game_close() {
+    audio_buffer_free(audio);
 }
 
 void game_key_up(int key) {
-    TODO("game_key_up");
+    // TODO("game_key_up");
 }
 
 void game_key_down(int key) {
-    TODO("game_key_down");
+    // TODO("game_key_down");
 }
