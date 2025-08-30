@@ -7,8 +7,8 @@
 float x = 10.0f;
 float y = 300.0f;
 
-float speedX = 1000.f;
-float speedY = -1000.f;
+float speedX = 100.f;
+float speedY = -100.f;
 
 AudioBuffer audio;
 AudioBuffer bg_song;

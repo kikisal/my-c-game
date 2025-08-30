@@ -1,8 +1,18 @@
 {
     "files.associations": {
+        "*.embeddedhtml": "html",
         "*.ejs": "html",
         "game.h": "c",
         "cstdlib": "c",
-        "audio.h": "c"
+        "audio.h": "c",
+        "glext.h": "c",
+        "wglext.h": "c",
+        "glad.h": "c",
+        "khrplatform.h": "c",
+        "gl.h": "c",
+        "compare": "c",
+        "inttypes.h": "c",
+        "windows.h": "c",
+        "time.h": "c"
     }
 }

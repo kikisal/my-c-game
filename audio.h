@@ -42,7 +42,6 @@ extern void         audio_buffer_pause(AudioBuffer* audio);
 extern void         audio_buffer_seek_start(AudioBuffer* audio);
 extern void         audio_buffer_seek(AudioBuffer* audio, size_t time);
 
-
 extern void         audio_buffer_sin_fill_mono(AudioBuffer buff);
 extern void         audio_buffer_sin_fill_stereo(AudioBuffer buff);
 extern void         audio_buffer_sin_fill_stereo_low(AudioBuffer buff);
@@ -72,14 +71,11 @@ static AudioDevice* s_audioDevice = NULL;
 
 static int16_t* s_audioBuffers[AUDIO_BUFFERS];
 
-#ifdef PLATFORM_WINDOWS
+#if defined(_WIN32)
 
 static int     s_Audio_CurrentWHDR = 0;
 static WAVEHDR s_Audio_WinHDRS[AUDIO_BUFFERS];
 
-#endif // PLATFORM_WINDOWS
-
-#ifdef PLATFORM_WINDOWS
 void CALLBACK audio_event_handler_win(HWAVEOUT h_waveOut, UINT uMsg, DWORD_PTR dwInstance,
                           DWORD_PTR dwParam1, DWORD_PTR dwParam2);
 #endif
@@ -247,7 +243,7 @@ void audio_buffer_pause(AudioBuffer* audio) {
     audio->playing = false;
 }
 
-#ifdef PLATFORM_WINDOWS
+#if defined(_WIN32)
 
 AudioDevice* audio_init_device() {
     // Open audio device
@@ -281,7 +277,7 @@ AudioDevice* audio_init_device() {
 }
 #else
 #   error "audio_init_device() not implemented for current OS."
-#endif // ifdef PLATFORM_WINDOWS
+#endif // if defined(_WIN32)
 
 void audio_buffer_sin_fill_stereo_low(AudioBuffer buff) {
     float Dt        = 1.0f / SAMPLE_RATE;
@@ -345,7 +341,7 @@ int16_t float_to_int16(float f)
     return (int16_t)(f * 32767.0f);
 }
 
-#ifdef PLATFORM_WINDOWS
+#if defined(_WIN32)
 void CALLBACK audio_event_handler_win(
     HWAVEOUT h_waveOut, UINT uMsg, DWORD_PTR dwInstance,
     DWORD_PTR dwParam1, DWORD_PTR dwParam2) 

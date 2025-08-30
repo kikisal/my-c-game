@@ -1,38 +1,287 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include <stdio.h>
-#include <inttypes.h>
+#include <stdint.h>
 #include <math.h>
 #include <stdbool.h>
 
 #include "game.h"
 
-#define PLATFORM_WINDOWS
 #define AUDIO_IMPLEMENTATION
 #include "audio.h"
 
+#include "deps/glad/glad.h"
+
+
+#if !defined(_WIN32)
+    #include <time.h>
+#endif // !defined(_WIN32)
+
+#if defined(_WIN32)
+#   include <GL/wglext.h>
+#endif // defined(_WIN32)
+
+uint64_t get_time_ns();
+
+#if defined(_WIN32)
+
+#define GAME_TITLE_CLASS    "MyLittleGameClx"
+
+static BITMAPINFO s_Bmi = {0};
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+static HGLRC s_hglrc;
+static HDC   s_hdc;
+static HINSTANCE hInstance;
+
+#endif // defined(_WIN32)
+
+// @deprecated
 #define OLIVEC_IMPLEMENTATION
 #include "deps/olivec/olive.c"
 
-#define GAME_TITLE    "My Little Game"
+typedef struct Window_st * Window;
 
-#ifdef PLATFORM_WINDOWS
-#   define GAME_TITLE_CLASS    "MyLittleGameClx"
+static bool     init_platform();
+static Window   create_window(size_t width, size_t height, const char* title);
+static bool     create_opengl_context(Window window);
 
-static BITMAPINFO s_Bmi = {0};
+GLuint          compile_shader(const char* src, GLenum type);
 
-#endif
-
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 static Olivec_Canvas canvas;
 
-#define MAIN int main
+// simple shader sources
+const char* vs_src =
+    "#version 410 core\n"
+    "layout(location = 0) in vec2 aPos;\n"
+    "void main() {\n"
+    "    gl_Position = vec4(aPos, 0.0, 1.0);\n"
+    "}\n";
+
+const char* fs_src =
+    "#version 410 core\n"
+    "out vec4 FragColor;\n"
+    "void main() {\n"
+    "    FragColor = vec4(0.2, 0.7, 1.0, 1.0);\n"
+    "}\n";
+    
+
+int main() {
+    AudioDevice* device = audio_init_device();
+    
+    init_platform();
+
+    Window window = create_window(CANVAS_WIDTH, CANVAS_HEIGHT, GAME_TITLE);
+    
+    if (!create_opengl_context(window)) {
+        printf("create_opengl_context() failed! Quitting.\n");
+        return -1;
+    }
+
+    GLuint vs = compile_shader(vs_src, GL_VERTEX_SHADER);
+    GLuint fs = compile_shader(fs_src, GL_FRAGMENT_SHADER);
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vs);
+    glAttachShader(prog, fs);
+    glLinkProgram(prog);
+
+    float vertices[] = {
+        -0.5f, -0.5f,
+         0.5f, -0.5f,
+         0.0f,  0.5f
+    };
+
+    GLuint vao, vbo;
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    canvas = olivec_canvas(
+        malloc(CANVAS_WIDTH * CANVAS_HEIGHT * sizeof(uint32_t)),
+        CANVAS_WIDTH, CANVAS_HEIGHT, CANVAS_WIDTH
+    );
+
+    game_init(canvas);
+    int sleepDelay = (int)((1.0f/(float)FPS)*1000.0f);
+
+
+
+    glViewport(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+#if defined(_WIN32)
+    MSG msg;
+#endif
+
+    while (true) {
+        uint64_t begin = get_time_ns();
+
+    #if defined(_WIN32)
+        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) return 0;
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+    #endif // defined(_WIN32)
+        
+        // olivec_fill(canvas, 0x00);
+        // game_update(canvas);
+
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(prog);
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glUseProgram(0);
+        
+        SwapBuffers(s_hdc);
+        
+        uint64_t end = get_time_ns();
+
+        uint64_t ellapsed = (end - begin) / 1000000LL;
+        
+        if (ellapsed < 16) {
+        #if defined(_WIN32)
+            Sleep(sleepDelay - ellapsed);
+        #endif // defined(_WIN32)
+        }
+    }
+
+    // destroy game
+    game_close();
+    
+#if defined(_WIN32)
+    wglMakeCurrent(NULL, NULL);
+    wglDeleteContext(s_hglrc);
+
+    ReleaseDC((HWND) window, s_hdc);
+    waveOutClose((HWAVEOUT) device);
+#endif // defined(_WIN32)
+    return 0;
+}
 
 #if defined(_WIN32)
-    #include <windows.h>
+
+static Window create_window(size_t width, size_t height, const char* title) {
+
+    WNDCLASS wc      = {0};
+    wc.lpfnWndProc   = WindowProc;
+    wc.hInstance     = hInstance;
+    wc.lpszClassName = GAME_TITLE_CLASS;
+    wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
+
+    if (!RegisterClass(&wc)) return NULL;
+
+    RECT winRect = { 0, 0, width, height };
+    AdjustWindowRect(&winRect, WS_OVERLAPPEDWINDOW, FALSE);
+  
+    HWND hwnd = CreateWindowEx(
+        0,
+        GAME_TITLE_CLASS,
+        title,
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT,
+        winRect.right - winRect.left,
+        winRect.bottom - winRect.top,
+        NULL, NULL,
+        hInstance,
+        NULL
+    );
+
+    if (!hwnd) {
+        DWORD err = GetLastError();
+        char buf[256];
+        sprintf(buf, "CreateWindowEx failed with error %lu", err);
+        MessageBox(NULL, buf, "Error", MB_ICONERROR);
+
+        return NULL;
+    }
+
+    ShowWindow(hwnd, SW_SHOWNORMAL);
+
+    // setup bit map info structure
+    s_Bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+    s_Bmi.bmiHeader.biWidth       = width;
+    s_Bmi.bmiHeader.biHeight      = -height;
+    s_Bmi.bmiHeader.biPlanes      = 1;
+    s_Bmi.bmiHeader.biBitCount    = 32;
+    s_Bmi.bmiHeader.biCompression = BI_RGB;
+
+    return (Window)hwnd;
+}
+
+static bool init_platform() {
+    hInstance        = GetModuleHandle(NULL);
+}
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    switch (uMsg) {
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+    }
+    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+}
+
+static bool create_opengl_context(Window window) {
+    s_hdc   = GetDC((HWND)window);
+
+    PIXELFORMATDESCRIPTOR pfd = {
+        sizeof(PIXELFORMATDESCRIPTOR),
+        1,
+        PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
+        PFD_TYPE_RGBA,
+        32,
+        0, 0, 0, 0, 0, 0,
+        0,
+        0,
+        0,
+        0, 0, 0, 0,
+        24, // depth buffer
+        8,  // stencil buffer
+        0,
+        PFD_MAIN_PLANE,
+        0,
+        0, 0, 0
+    };
+
+    int pixelFormat = ChoosePixelFormat(s_hdc, &pfd);
+    SetPixelFormat(s_hdc, pixelFormat, &pfd);
+
+    HGLRC tmpCtx = wglCreateContext(s_hdc);
+    wglMakeCurrent(s_hdc, tmpCtx);
+
+    // load the extension function
+    PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB =
+        (PFNWGLCREATECONTEXTATTRIBSARBPROC) wglGetProcAddress("wglCreateContextAttribsARB");
+
+    int attribs[] = {
+        WGL_CONTEXT_MAJOR_VERSION_ARB, OPENGL_MAJOR_VERSION,
+        WGL_CONTEXT_MINOR_VERSION_ARB, OPENGL_MINOR_VERSION,
+        WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+        0
+    };
+
+    s_hglrc = wglCreateContextAttribsARB(s_hdc, 0, attribs);
+    wglMakeCurrent(NULL, NULL);
+    wglDeleteContext(tmpCtx);
+
+    wglMakeCurrent(s_hdc, s_hglrc);
+
+    if (!gladLoadGL()) {
+        MessageBox((HWND)window, "Failed to load OpenGL functions!", "Error", MB_OK);
+        return false;
+    }
+
+    return true;
+}
 #else
-    #include <time.h>
+#error "create_opengl_context()  not implemented in your current OS."
 #endif
 
 // Returns current time in nanoseconds (monotonic, high-resolution)
@@ -54,138 +303,17 @@ uint64_t get_time_ns() {
 #endif
 }
 
-MAIN() {
 
-    AudioDevice* device = audio_init_device();
-
-    HINSTANCE hInstance = GetModuleHandle(NULL);
-
-    WNDCLASS wc      = {0};
-    wc.lpfnWndProc   = WindowProc;
-    wc.hInstance     = hInstance;
-    wc.lpszClassName = GAME_TITLE_CLASS;
-    wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
-
-    if (!RegisterClass(&wc)) return -1;
-
-    RECT winRect = { 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT };
-    AdjustWindowRect(&winRect, WS_OVERLAPPEDWINDOW, FALSE);
-  
-    HWND hwnd = CreateWindowEx(
-        0,
-        GAME_TITLE_CLASS,
-        GAME_TITLE,
-        WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT,
-        winRect.right - winRect.left,
-        winRect.bottom - winRect.top,
-        NULL, NULL,
-        hInstance,
-        NULL
-    );
-
-    if (!hwnd) {
-        DWORD err = GetLastError();
-        char buf[256];
-        sprintf(buf, "CreateWindowEx failed with error %lu", err);
-        MessageBox(NULL, buf, "Error", MB_ICONERROR);
-
-        return -1;
+GLuint compile_shader(const char* src, GLenum type) {
+    GLuint sh = glCreateShader(type);
+    glShaderSource(sh, 1, &src, NULL);
+    glCompileShader(sh);
+    int success;
+    glGetShaderiv(sh, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char log[512];
+        glGetShaderInfoLog(sh, 512, NULL, log);
+        MessageBox(NULL, log, "Shader compile error", MB_OK);
     }
-
-    ShowWindow(hwnd, SW_SHOWNORMAL);
-
-    // setup bit map info structure
-    s_Bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
-    s_Bmi.bmiHeader.biWidth       = CANVAS_WIDTH;
-    s_Bmi.bmiHeader.biHeight      = -CANVAS_HEIGHT;
-    s_Bmi.bmiHeader.biPlanes      = 1;
-    s_Bmi.bmiHeader.biBitCount    = 32;
-    s_Bmi.bmiHeader.biCompression = BI_RGB;
-
-
-    HDC hdc     = GetDC(hwnd);
-    // mem Device Context
-    HDC canvasDC   = CreateCompatibleDC(hdc);
-
-    void* dibPixels;
-    HBITMAP hBitmap   = CreateDIBSection(hdc, &s_Bmi, DIB_RGB_COLORS, &dibPixels, NULL, 0);
-    HBITMAP oldBitmap = SelectObject(canvasDC, hBitmap);
-
-    canvas = olivec_canvas(
-        dibPixels,
-        CANVAS_WIDTH, CANVAS_HEIGHT, CANVAS_WIDTH
-    );
-
-    MSG msg;
-    int frame_count = 0;
-    
-    HBRUSH winBlackBrush = CreateSolidBrush(RGB(0,0,0)); // black
-    RECT clearRect       = {0, 0, CANVAS_WIDTH, CANVAS_HEIGHT};
-    
-    game_init(canvas);
-    
-
-    int sleepDelay = (int)((1.0f/(float)FPS)*1000.0f);
-
-    while (1) {
-
-        uint64_t begin = get_time_ns();
- 
-        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) return 0;
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }
-        
-        FillRect(canvasDC, &clearRect, winBlackBrush);
-        
-        // olivec_fill(canvas, 0x00);
-        game_update(canvas);
-        
-        // memcpy(dibPixels, canvas.pixels, canvas.width * canvas.height * sizeof(uint32_t));
-        
-        BitBlt(
-            hdc,
-            0, 0,
-            CANVAS_WIDTH, CANVAS_HEIGHT,
-            canvasDC,
-            0, 0,
-            SRCCOPY
-        );
-
-        uint64_t end = get_time_ns();
-
-        uint64_t ellapsed = (end - begin) / 1000000LL;
-        
-        // printf("%lld\n", ellapsed);
-        if (ellapsed < 16)
-            Sleep(sleepDelay - ellapsed);
-    }
-
-    // destroy game
-    game_close();
-
-    DeleteObject(winBlackBrush);
-
-    SelectObject(canvasDC, oldBitmap);
-    DeleteObject(hBitmap);
-
-    DeleteDC(canvasDC);
-    ReleaseDC(hwnd, hdc);
-
-    getchar();
-    printf("finished!\n");
-
-    waveOutClose((HWAVEOUT) device);
-    return 0;
-}
-
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    switch (uMsg) {
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
-    }
-    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    return sh;
 }

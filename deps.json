@@ -1,5 +1,6 @@
 {
     "deps": {
-        "olivec": "https://github.com/tsoding/olive.c"
+        "olivec": "https://github.com/tsoding/olive.c",
+        "glad": ""
     }
 }
