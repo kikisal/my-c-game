@@ -1,0 +1,4 @@
+TODO:
+    Implement Blinn-Model lighting
+    Then implement point shadows:
+        - https://learnopengl.com/Advanced-Lighting/Shadows/Point-Shadows

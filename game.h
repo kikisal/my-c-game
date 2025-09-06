@@ -9,7 +9,7 @@
 #define OPENGL_MINOR_VERSION 4
 
 #define GAME_TITLE              "My Little Game"
-#define CANVAS_WIDTH            600
+#define CANVAS_WIDTH            800
 #define CANVAS_HEIGHT           600
 
 #define AUDIO_CHANNELS          2

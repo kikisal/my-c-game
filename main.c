@@ -43,6 +43,7 @@ static HINSTANCE hInstance;
 
 #define EPS 0.00001f
 
+#define degtorad(x) M_PI * (x) / 180.0f
 // mat lib
 typedef struct Mat4_st Mat4;
 
@@ -55,6 +56,7 @@ struct Mat4_st {
 
 #define MATDEF static
 
+MATDEF Mat4 mat_inv(Mat4 m);
 MATDEF Mat4 mat_mul(Mat4 m1, Mat4 m2);
 MATDEF Mat4 mat4_identity();
 MATDEF Mat4 mat_translate(float x, float y, float z);
@@ -63,15 +65,17 @@ MATDEF Mat4 mat_rotate_x(float angle);
 MATDEF Mat4 mat_rotate_y(float angle);
 MATDEF Mat4 mat_rotate_z(float angle);
 
-typedef struct Vec3_st {
+typedef struct vec3_st {
     float x, y, z;
-} Vec3;
+} vec3;
 
 
-Vec3 vec3_add(Vec3 a, Vec3 b);
-Vec3 vec3_sub(Vec3 a, Vec3 b);
-Vec3 vec3_norm(Vec3 v);
-Vec3 vec3_cross(Vec3 side1, Vec3 side2);
+#define vec3_init(...) (vec3) {__VA_ARGS__}
+
+vec3 vec3_add(vec3 a, vec3 b);
+vec3 vec3_sub(vec3 a, vec3 b);
+vec3 vec3_norm(vec3 v);
+vec3 vec3_cross(vec3 side1, vec3 side2);
 
 typedef struct Quaternion_st {
     float x, y, z, w;
@@ -81,8 +85,8 @@ Quaternion quat_add(Quaternion a, Quaternion b);
 Quaternion quat_sub(Quaternion a, Quaternion b);
 Quaternion quat_mul(Quaternion a, Quaternion b);
 Quaternion quat_normalize(Quaternion q);
-Quaternion quat_from_axis_angle(Vec3 axis, float angle);
-Quaternion quat_rotate(Vec3 direction, float angle);
+Quaternion quat_from_axis_angle(vec3 axis, float angle);
+Quaternion quat_rotate(vec3 direction, float angle);
 Mat4       quat_to_mat4(Quaternion q);
 Quaternion quat_inverse(Quaternion q);
 
@@ -114,6 +118,15 @@ typedef struct QuadMesh_st  QuadMesh;
 typedef struct Camera_st Camera_t;
 
 struct Camera_st {
+    vec3 position;
+    vec3 target;
+    vec3 up;
+
+    float n;
+    float f;
+    float fov;
+
+    bool needs_update;
     Mat4 view_matrix;
     Mat4 proj_matrix;
     Mat4 combined_matrix;
@@ -146,10 +159,10 @@ typedef struct Mesh_st Mesh_t;
 typedef struct Transform_st Transform;
 
 struct Transform_st {
-    Vec3       position;
-    Vec3       rotation;
+    vec3       position;
+    vec3       rotation;
     Quaternion rotation_q;
-    Vec3       scale;
+    vec3       scale;
 
     rot_mode_t rot_mode;
 };
@@ -172,8 +185,13 @@ GLuint      createShaderProgramGL_(File_t vs_file, File_t fs_file);
 GLProgram_t createShaderProgramGL(File_t vs_file, File_t fs_file);
 
 QuadMesh    createQuadMesh(size_t texture_width, size_t texture_height, GLuint program);
-Mesh_t      createTriangleMesh(Vec3 v1, Vec3 v2, Vec3 v3, Color color, GLProgram_t program);
-void        renderMesh(Mesh_t m, Camera_t camera);
+Mesh_t      createTriangleMesh(vec3 v1, vec3 v2, vec3 v3, Color color, GLProgram_t program);
+void        renderMesh(Mesh_t m, Camera_t* camera);
+
+Camera_t    camera_init(vec3 position, vec3 target, float near_plane, float far_plane, float fov);
+void        camera_compute_matrices(Camera_t* camera);
+void        camera_compute_viewmatrix(Camera_t* camera);
+void        camera_compute_projmatrix(Camera_t* camera);
 
 // -- engine constants. --
 
@@ -227,19 +245,31 @@ int main() {
     QuadMesh quadMesh       = createQuadMesh(CANVAS_WIDTH, CANVAS_HEIGHT, quadProg);
 
     GLProgram_t defaultProg = createShaderProgramGL(default_vs_file, default_fs_file);
+    
     Mesh_t triangle = createTriangleMesh(
-        (Vec3) {.5f, 0.0f, 0.0f},
-        (Vec3) {0.0f, 0.5f, 0.0f},
-        (Vec3) {-.5f, 0.0f, 0.0f},
+        (vec3)  {-.5f, -.5f, 0.0f},
+        (vec3)  {.5f,  -.5f, 0.0f},
+        (vec3)  { 0.5f, 0.5f, 0.0f},
         (Color) {1.0f, 0.0f, 0.0f, 1.0f}, 
         defaultProg
     );
 
-    Camera_t camera = {
-        .view_matrix     = view_matrix,
-        .proj_matrix     = proj_matrix,
-        .combined_matrix = mat_mul(proj_matrix, view_matrix)
-    };
+    Mesh_t triangle2 = createTriangleMesh(
+        (vec3)  {-.5f, -.5f, 0.0f},
+        (vec3)  {-.5f,  .5f, 0.0f},
+        (vec3)  { 0.5f, 0.5f, 0.0f},
+        (Color) {1.0f, 0.0f, 0.0f, 1.0f}, 
+        defaultProg
+    );
+    
+    float fov = 60.0f;
+    Camera_t camera = camera_init(
+        vec3_init(0.0f, 0.0f, 1.0f), 
+        vec3_init(0.0f),
+        0.1f,
+        1000.0f,
+        degtorad(fov)
+    );
 
     canvas = olivec_canvas(
         malloc(CANVAS_WIDTH * CANVAS_HEIGHT * sizeof(uint32_t)),
@@ -254,8 +284,6 @@ int main() {
     MSG msg;
 #endif
 
-    float angle = 0.0f;
-    
     glEnable(GL_DEPTH);
 
     while (true) {
@@ -274,10 +302,13 @@ int main() {
 
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        angle += .01f;
 
-        triangle.transform.rotation_q = quat_from_axis_angle((Vec3) {.0, 1.0f, 0.0}, angle);
-        renderMesh(triangle, camera);
+        camera.position.x             -= .01f;
+        camera.position.y              = 1.0f;
+        triangle.transform.rotation_q  = quat_from_axis_angle((vec3) {1.0, 0.0f, 0.0}, M_PI/2.0f);
+        triangle2.transform.rotation_q = quat_from_axis_angle((vec3) {1.0, 0.0f, 0.0}, M_PI/2.0f);
+        renderMesh(triangle, &camera);
+        renderMesh(triangle2, &camera);
         
         // canvas_to_GLtexture(canvas, quadMesh.texture);
         // renderQuad(quadMesh);
@@ -463,6 +494,154 @@ GLuint compile_shader(const char* src, GLenum type) {
 
 // mat module
 
+#include <stdbool.h>
+#include <math.h>
+
+typedef struct {
+    float m00, m01, m02, m03,
+          m10, m11, m12, m13,
+          m20, m21, m22, m23,
+          m30, m31, m32, m33;
+} Mat4_st;
+
+MATDEF Mat4 mat_inv(Mat4 m) {
+    float inv[16];
+    float det;
+    float tmp[16] = {
+        m.m00, m.m01, m.m02, m.m03,
+        m.m10, m.m11, m.m12, m.m13,
+        m.m20, m.m21, m.m22, m.m23,
+        m.m30, m.m31, m.m32, m.m33
+    };
+
+    inv[0] =   tmp[5]  * tmp[10] * tmp[15] - 
+               tmp[5]  * tmp[11] * tmp[14] - 
+               tmp[9]  * tmp[6]  * tmp[15] + 
+               tmp[9]  * tmp[7]  * tmp[14] +
+               tmp[13] * tmp[6]  * tmp[11] - 
+               tmp[13] * tmp[7]  * tmp[10];
+
+    inv[4] =  -tmp[4]  * tmp[10] * tmp[15] + 
+               tmp[4]  * tmp[11] * tmp[14] + 
+               tmp[8]  * tmp[6]  * tmp[15] - 
+               tmp[8]  * tmp[7]  * tmp[14] - 
+               tmp[12] * tmp[6]  * tmp[11] + 
+               tmp[12] * tmp[7]  * tmp[10];
+
+    inv[8] =   tmp[4]  * tmp[9]  * tmp[15] - 
+               tmp[4]  * tmp[11] * tmp[13] - 
+               tmp[8]  * tmp[5]  * tmp[15] + 
+               tmp[8]  * tmp[7]  * tmp[13] + 
+               tmp[12] * tmp[5]  * tmp[11] - 
+               tmp[12] * tmp[7]  * tmp[9];
+
+    inv[12] = -tmp[4]  * tmp[9]  * tmp[14] + 
+               tmp[4]  * tmp[10] * tmp[13] +
+               tmp[8]  * tmp[5]  * tmp[14] - 
+               tmp[8]  * tmp[6]  * tmp[13] - 
+               tmp[12] * tmp[5]  * tmp[10] + 
+               tmp[12] * tmp[6]  * tmp[9];
+
+    inv[1] =  -tmp[1]  * tmp[10] * tmp[15] + 
+               tmp[1]  * tmp[11] * tmp[14] + 
+               tmp[9]  * tmp[2]  * tmp[15] - 
+               tmp[9]  * tmp[3]  * tmp[14] - 
+               tmp[13] * tmp[2]  * tmp[11] + 
+               tmp[13] * tmp[3]  * tmp[10];
+
+    inv[5] =   tmp[0]  * tmp[10] * tmp[15] - 
+               tmp[0]  * tmp[11] * tmp[14] - 
+               tmp[8]  * tmp[2]  * tmp[15] + 
+               tmp[8]  * tmp[3]  * tmp[14] + 
+               tmp[12] * tmp[2]  * tmp[11] - 
+               tmp[12] * tmp[3]  * tmp[10];
+
+    inv[9] =  -tmp[0]  * tmp[9]  * tmp[15] + 
+               tmp[0]  * tmp[11] * tmp[13] + 
+               tmp[8]  * tmp[1]  * tmp[15] - 
+               tmp[8]  * tmp[3]  * tmp[13] - 
+               tmp[12] * tmp[1]  * tmp[11] + 
+               tmp[12] * tmp[3]  * tmp[9];
+
+    inv[13] =  tmp[0]  * tmp[9]  * tmp[14] - 
+               tmp[0]  * tmp[10] * tmp[13] - 
+               tmp[8]  * tmp[1]  * tmp[14] + 
+               tmp[8]  * tmp[2]  * tmp[13] + 
+               tmp[12] * tmp[1]  * tmp[10] - 
+               tmp[12] * tmp[2]  * tmp[9];
+
+    inv[2] =   tmp[1]  * tmp[6]  * tmp[15] - 
+               tmp[1]  * tmp[7]  * tmp[14] - 
+               tmp[5]  * tmp[2]  * tmp[15] + 
+               tmp[5]  * tmp[3]  * tmp[14] + 
+               tmp[13] * tmp[2]  * tmp[7]  - 
+               tmp[13] * tmp[3]  * tmp[6];
+
+    inv[6] =  -tmp[0]  * tmp[6]  * tmp[15] + 
+               tmp[0]  * tmp[7]  * tmp[14] + 
+               tmp[4]  * tmp[2]  * tmp[15] - 
+               tmp[4]  * tmp[3]  * tmp[14] - 
+               tmp[12] * tmp[2]  * tmp[7]  + 
+               tmp[12] * tmp[3]  * tmp[6];
+
+    inv[10] =  tmp[0]  * tmp[5]  * tmp[15] - 
+               tmp[0]  * tmp[7]  * tmp[13] - 
+               tmp[4]  * tmp[1]  * tmp[15] + 
+               tmp[4]  * tmp[3]  * tmp[13] + 
+               tmp[12] * tmp[1]  * tmp[7]  - 
+               tmp[12] * tmp[3]  * tmp[5];
+
+    inv[14] = -tmp[0]  * tmp[5]  * tmp[14] + 
+               tmp[0]  * tmp[6]  * tmp[13] + 
+               tmp[4]  * tmp[1]  * tmp[14] - 
+               tmp[4]  * tmp[2]  * tmp[13] - 
+               tmp[12] * tmp[1]  * tmp[6]  + 
+               tmp[12] * tmp[2]  * tmp[5];
+
+    inv[3] =  -tmp[1]  * tmp[6]  * tmp[11] + 
+               tmp[1]  * tmp[7]  * tmp[10] + 
+               tmp[5]  * tmp[2]  * tmp[11] - 
+               tmp[5]  * tmp[3]  * tmp[10] - 
+               tmp[9]  * tmp[2]  * tmp[7]  + 
+               tmp[9]  * tmp[3]  * tmp[6];
+
+    inv[7] =   tmp[0]  * tmp[6]  * tmp[11] - 
+               tmp[0]  * tmp[7]  * tmp[10] - 
+               tmp[4]  * tmp[2]  * tmp[11] + 
+               tmp[4]  * tmp[3]  * tmp[10] + 
+               tmp[8]  * tmp[2]  * tmp[7]  - 
+               tmp[8]  * tmp[3]  * tmp[6];
+
+    inv[11] = -tmp[0]  * tmp[5]  * tmp[11] + 
+               tmp[0]  * tmp[7]  * tmp[9]  + 
+               tmp[4]  * tmp[1]  * tmp[11] - 
+               tmp[4]  * tmp[3]  * tmp[9]  - 
+               tmp[8]  * tmp[1]  * tmp[7]  + 
+               tmp[8]  * tmp[3]  * tmp[5];
+
+    inv[15] =  tmp[0]  * tmp[5]  * tmp[10] - 
+               tmp[0]  * tmp[6]  * tmp[9]  - 
+               tmp[4]  * tmp[1]  * tmp[10] + 
+               tmp[4]  * tmp[2]  * tmp[9]  + 
+               tmp[8]  * tmp[1]  * tmp[6]  - 
+               tmp[8]  * tmp[2]  * tmp[5];
+
+    det = tmp[0] * inv[0] + tmp[1] * inv[4] + tmp[2] * inv[8] + tmp[3] * inv[12];
+
+    if (fabsf(det) < 1e-6f) {
+        return (Mat4) {0.0f};
+    }
+
+    det = 1.0f / det;
+
+    m.m00 = inv[0]  * det;  m.m01 = inv[1]  * det;  m.m02 = inv[2]  * det;  m.m03 = inv[3]  * det;
+    m.m10 = inv[4]  * det;  m.m11 = inv[5]  * det;  m.m12 = inv[6]  * det;  m.m13 = inv[7]  * det;
+    m.m20 = inv[8]  * det;  m.m21 = inv[9]  * det;  m.m22 = inv[10] * det;  m.m23 = inv[11] * det;
+    m.m30 = inv[12] * det;  m.m31 = inv[13] * det;  m.m32 = inv[14] * det;  m.m33 = inv[15] * det;
+
+    return m;
+}
+
 MATDEF Mat4 mat_mul(Mat4 m1, Mat4 m2) {
     Mat4 result = {0.0f};
     result.m00 = m1.m00 * m2.m00 + m1.m01 * m2.m10 + m1.m02 * m2.m20 + m1.m03 * m2.m30;
@@ -552,37 +731,37 @@ MATDEF Mat4 mat_rotate_z(float angle) {
     return result;
 }
 
-Vec3 vec3_add(Vec3 a, Vec3 b) {
-    return (Vec3) {
+vec3 vec3_add(vec3 a, vec3 b) {
+    return (vec3) {
         .x = a.x + b.x,
         .y = a.y + b.y,
         .z = a.z + b.z,
     };
 }
 
-Vec3 vec3_sub(Vec3 a, Vec3 b) {
-    return (Vec3) {
+vec3 vec3_sub(vec3 a, vec3 b) {
+    return (vec3) {
         .x = a.x - b.x,
         .y = a.y - b.y,
         .z = a.z - b.z,
     };
 }
 
-Vec3 vec3_norm(Vec3 v) {
+vec3 vec3_norm(vec3 v) {
     float len = v.x*v.x + v.y*v.y + v.z*v.z;
-    if (fabsf(len) < EPS) return (Vec3) {0.0f};
+    if (fabsf(len) < EPS) return (vec3) {0.0f};
     
     len = sqrtf(len);
 
-    return (Vec3) {
+    return (vec3) {
         .x = v.x / len,
         .y = v.y / len,
         .z = v.z / len,
     };
 }
 
-Vec3 vec3_cross(Vec3 side1, Vec3 side2) {
-    return (Vec3) {
+vec3 vec3_cross(vec3 side1, vec3 side2) {
+    return (vec3) {
         .x = side1.y * side2.z - side1.z * side2.y,
         .y = side1.z * side2.x - side1.x * side2.z,
         .z = side1.x * side2.y - side1.y * side2.x
@@ -616,14 +795,14 @@ Quaternion quat_normalize(Quaternion q) {
     return (Quaternion){ q.x*inv, q.y*inv, q.z*inv, q.w*inv };
 }
 
-Quaternion quat_from_axis_angle(Vec3 axis, float angle) {
+Quaternion quat_from_axis_angle(vec3 axis, float angle) {
     float half = angle * 0.5f;
     float s = sinf(half);
     Quaternion q = { axis.x * s, axis.y * s, axis.z * s, cosf(half) };
     return quat_normalize(q);
 }
 
-Quaternion quat_rotate(Vec3 direction, float angle) {
+Quaternion quat_rotate(vec3 direction, float angle) {
     return quat_from_axis_angle(direction, angle);
 }
 
@@ -820,7 +999,7 @@ void canvas_to_GLtexture(Olivec_Canvas src, GLint dest) {
     glBindTexture(GL_TEXTURE_2D, dest);    
 }
 
-Mesh_t createTriangleMesh(Vec3 v1, Vec3 v2, Vec3 v3, Color color, GLProgram_t prog) {
+Mesh_t createTriangleMesh(vec3 v1, vec3 v2, vec3 v3, Color color, GLProgram_t prog) {
     Mesh_t mesh;
 
     mesh.transform = (Transform) {
@@ -835,9 +1014,9 @@ Mesh_t createTriangleMesh(Vec3 v1, Vec3 v2, Vec3 v3, Color color, GLProgram_t pr
     }
 
     // compute normal vector
-    Vec3 side1  = vec3_sub(v1, v2);
-    Vec3 side2  = vec3_sub(v1, v3);
-    Vec3 normal = vec3_norm(vec3_cross(side1, side2));
+    vec3 side1  = vec3_sub(v1, v2);
+    vec3 side2  = vec3_sub(v1, v3);
+    vec3 normal = vec3_norm(vec3_cross(side1, side2));
 
 #   define NORMAL_
 #   define UV_
@@ -884,9 +1063,8 @@ Mesh_t createTriangleMesh(Vec3 v1, Vec3 v2, Vec3 v3, Color color, GLProgram_t pr
 #   undef UV_
 }
 
-
-void renderMesh(Mesh_t m, Camera_t camera) {
-    if (!m.program.program) return;
+void renderMesh(Mesh_t m, Camera_t* camera) {
+    if (!m.program.program || !camera) return;
 
     Mat4 world_mat = mat4_identity();
     
@@ -903,12 +1081,14 @@ void renderMesh(Mesh_t m, Camera_t camera) {
     world_mat = mat_mul(mat_translate(m.transform.position.x, m.transform.position.y, m.transform.position.z), world_mat);
     // M = T * S * R 
     m.localToWorld = world_mat; 
+        
+    camera_compute_matrices(camera);
 
     glBindVertexArray(m.vao);
     glUseProgram(m.program.program);
 
-    glUniformMatrix4fv(m.program.view_mat_loc, 1, GL_TRUE, (float*)(&camera.view_matrix));
-    glUniformMatrix4fv(m.program.proj_mat_loc, 1, GL_TRUE, (float*)(&camera.proj_matrix));
+    glUniformMatrix4fv(m.program.view_mat_loc,  1, GL_TRUE, (float*)(&camera->view_matrix));
+    glUniformMatrix4fv(m.program.proj_mat_loc,  1, GL_TRUE, (float*)(&camera->proj_matrix));
     glUniformMatrix4fv(m.program.world_mat_loc, 1, GL_TRUE, (float*)(&m.localToWorld));
     
     if (m.ebo) {
@@ -918,4 +1098,91 @@ void renderMesh(Mesh_t m, Camera_t camera) {
     }
     glBindVertexArray(0);
     glUseProgram(0);
+}
+
+void camera_compute_matrices(Camera_t* camera) {
+    if (!camera) return;
+    
+    camera_compute_viewmatrix(camera);
+    camera_compute_projmatrix(camera);
+    camera->combined_matrix = mat_mul(camera->proj_matrix, camera->view_matrix);
+    camera->needs_update = false;
+}
+
+// TODO: Implement FOV parameter.
+Camera_t camera_init(vec3 position, vec3 target, float near_plane, float far_plane, float fov) {
+    return (Camera_t) {
+        .position = position,
+        .target   = target,
+        .up       = vec3_init(0.0f, 1.0f, 0.0f),
+        .n        = near_plane,
+        .f        = far_plane,
+        .fov      = fov
+    };
+}
+
+void camera_compute_viewmatrix(Camera_t* camera) {
+    camera->view_matrix = mat_translate(camera->position.x, camera->position.y, camera->position.z);
+    vec3 z_axis = vec3_norm(vec3_sub(camera->position, camera->target));
+    vec3 x_axis = vec3_norm(vec3_cross(camera->up, z_axis));
+    vec3 y_axis = vec3_norm(vec3_cross(z_axis, x_axis));
+    camera->view_matrix.m00 = x_axis.x;
+    camera->view_matrix.m10 = x_axis.y;
+    camera->view_matrix.m20 = x_axis.z;
+
+    camera->view_matrix.m01 = y_axis.x;
+    camera->view_matrix.m11 = y_axis.y;
+    camera->view_matrix.m21 = y_axis.z;
+
+    camera->view_matrix.m02 = z_axis.x;
+    camera->view_matrix.m12 = z_axis.y;
+    camera->view_matrix.m22 = z_axis.z;
+
+    camera->view_matrix = mat_inv(camera->view_matrix);
+}
+
+void camera_compute_projmatrix0(Camera_t* camera) {
+    float aspect = CANVAS_WIDTH / CANVAS_HEIGHT; // for now.
+    float height =  1.0f/aspect;
+
+    float left   = -.5;
+    float right  =  .5;
+    float top    =  height * .5;
+    float bottom = -height * .5;
+
+    camera->proj_matrix     = mat4_identity();
+    camera->proj_matrix.m00 = 2.0f * camera->n;
+    camera->proj_matrix.m11 = 2.0f * camera->n / height;
+    camera->proj_matrix.m22 = -(camera->f + camera->n)/(camera->f - camera->n);
+    camera->proj_matrix.m23 = (-2.0f * camera->f * camera->n) / (camera->f - camera->n);
+    
+    camera->proj_matrix.m02 = (right + left) / 1.0f;
+    camera->proj_matrix.m12 = (top + bottom) / height;
+    
+    camera->proj_matrix.m32 = -1.0f;
+    camera->proj_matrix.m33 = 0.0f;
+}
+
+void camera_compute_projmatrix(Camera_t* camera) {
+    float aspect = CANVAS_WIDTH / CANVAS_HEIGHT; // for now.
+    
+    float height =  2.0f * camera->n * tanf(camera->fov / 2.0f);
+    float width  = height * aspect;
+    
+    float left   = -width * .5f;
+    float right  =  width * .5f;
+    float top    =  height * .5f;
+    float bottom = -height * .5f;
+
+    camera->proj_matrix     = mat4_identity();
+    camera->proj_matrix.m00 = 2.0f * camera->n / width;
+    camera->proj_matrix.m11 = 2.0f * camera->n / height;
+    camera->proj_matrix.m22 = -(camera->f + camera->n)/(camera->f - camera->n);
+    camera->proj_matrix.m23 = (-2.0f * camera->f * camera->n) / (camera->f - camera->n);
+    
+    camera->proj_matrix.m02 = (right + left) / 1.0f;
+    camera->proj_matrix.m12 = (top + bottom) / height;
+    
+    camera->proj_matrix.m32 = -1.0f;
+    camera->proj_matrix.m33 = 0.0f;
 }
