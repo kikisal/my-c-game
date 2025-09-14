@@ -13,6 +13,8 @@
 #include "deps/glad/glad.h"
 
 #define DEFAULT_ROTMODE ROTMODE_QUATERNION
+#define VERTEX_STRIDE 11
+
 
 #if !defined(_WIN32)
     #include <time.h>
@@ -69,6 +71,7 @@ typedef struct vec3_st {
     float x, y, z;
 } vec3;
 
+MATDEF vec3 mat_transform(vec3 v, Mat4 m);
 
 #define vec3_init(...) (vec3) {__VA_ARGS__}
 
@@ -184,8 +187,10 @@ void        renderQuad(QuadMesh mesh);
 GLuint      createShaderProgramGL_(File_t vs_file, File_t fs_file);
 GLProgram_t createShaderProgramGL(File_t vs_file, File_t fs_file);
 
+bool        meshSetupGLBuffers(Mesh_t * mesh, float* vbo_buffer, size_t buff_size);
 QuadMesh    createQuadMesh(size_t texture_width, size_t texture_height, GLuint program);
 Mesh_t      createTriangleMesh(vec3 v1, vec3 v2, vec3 v3, Color color, GLProgram_t program);
+Mesh_t      createCubeMesh(float width, float height, float depth, Color color, GLProgram_t program);
 void        renderMesh(Mesh_t m, Camera_t* camera);
 
 Camera_t    camera_init(vec3 position, vec3 target, float near_plane, float far_plane, float fov);
@@ -245,22 +250,15 @@ int main() {
     QuadMesh quadMesh       = createQuadMesh(CANVAS_WIDTH, CANVAS_HEIGHT, quadProg);
 
     GLProgram_t defaultProg = createShaderProgramGL(default_vs_file, default_fs_file);
-    
-    Mesh_t triangle = createTriangleMesh(
-        (vec3)  {-.5f, -.5f, 0.0f},
-        (vec3)  {.5f,  -.5f, 0.0f},
-        (vec3)  { 0.5f, 0.5f, 0.0f},
-        (Color) {1.0f, 0.0f, 0.0f, 1.0f}, 
-        defaultProg
-    );
 
-    Mesh_t triangle2 = createTriangleMesh(
-        (vec3)  {-.5f, -.5f, 0.0f},
-        (vec3)  {-.5f,  .5f, 0.0f},
-        (vec3)  { 0.5f, 0.5f, 0.0f},
-        (Color) {1.0f, 0.0f, 0.0f, 1.0f}, 
-        defaultProg
-    );
+    Mesh_t cube      = createCubeMesh(1.0f, 1.0f, 1.0f, (Color) {1.0f, 0.0f, 0.0f}, defaultProg);
+    Mesh_t lightCube = createCubeMesh(1.0f, 1.0f, 1.0f, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
+
+    lightCube.transform.position.z = -1.0f;
+    lightCube.transform.position.y = 1.0f;
+    lightCube.transform.scale.x    = .2f;
+    lightCube.transform.scale.y    = .2f;
+    lightCube.transform.scale.z    = .2f;
     
     float fov = 60.0f;
     Camera_t camera = camera_init(
@@ -305,10 +303,9 @@ int main() {
 
         camera.position.x             -= .01f;
         camera.position.y              = 1.0f;
-        triangle.transform.rotation_q  = quat_from_axis_angle((vec3) {1.0, 0.0f, 0.0}, M_PI/2.0f);
-        triangle2.transform.rotation_q = quat_from_axis_angle((vec3) {1.0, 0.0f, 0.0}, M_PI/2.0f);
-        renderMesh(triangle, &camera);
-        renderMesh(triangle2, &camera);
+
+        renderMesh(cube, &camera);
+        renderMesh(lightCube, &camera);
         
         // canvas_to_GLtexture(canvas, quadMesh.texture);
         // renderQuad(quadMesh);
@@ -731,6 +728,15 @@ MATDEF Mat4 mat_rotate_z(float angle) {
     return result;
 }
 
+MATDEF vec3 mat_transform(vec3 v, Mat4 m) {
+    // assumes w = 1
+    return (vec3) {
+        .x = m.m00 * v.x + m.m01 * v.y + m.m02 * v.z + m.m03,
+        .y = m.m10 * v.x + m.m11 * v.y + m.m12 * v.z + m.m13,
+        .z = m.m20 * v.x + m.m21 * v.y + m.m22 * v.z + m.m23,
+    };
+}
+
 vec3 vec3_add(vec3 a, vec3 b) {
     return (vec3) {
         .x = a.x + b.x,
@@ -999,6 +1005,126 @@ void canvas_to_GLtexture(Olivec_Canvas src, GLint dest) {
     glBindTexture(GL_TEXTURE_2D, dest);    
 }
 
+bool meshSetupGLBuffers(Mesh_t * mesh, float* vbo_buffer, size_t buff_size) {
+    if (!mesh) return false;
+
+    GLuint vao, vbo;
+    glGenBuffers(1, &vbo);
+    glGenVertexArrays(1, &vao);
+    
+    if (!vao || !vbo) return false;
+
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, buff_size, vbo_buffer, GL_STATIC_DRAW);
+
+    glBindVertexArray(vao);
+
+    // use same buffer for all attributes.
+    glVertexAttribPointer(ATTRIB_POSITION_LOCATION, 3, GL_FLOAT, GL_FALSE, VERTEX_STRIDE * sizeof(float), (void*) 0);
+    glVertexAttribPointer(ATTRIB_NORMAL_LOCATION, 3, GL_FLOAT, GL_FALSE, VERTEX_STRIDE * sizeof(float), (void*) (3 * sizeof(float)));
+    glVertexAttribPointer(ATTRIB_UV_LOCATION, 2, GL_FLOAT, GL_FALSE, VERTEX_STRIDE * sizeof(float), (void*) (6 * sizeof(float)));
+    glVertexAttribPointer(ATTRIB_COLOR_LOCATION, 4, GL_FLOAT, GL_FALSE, VERTEX_STRIDE * sizeof(float), (void*) (8 * sizeof(float)));
+
+    glEnableVertexAttribArray(ATTRIB_POSITION_LOCATION);
+    glEnableVertexAttribArray(ATTRIB_NORMAL_LOCATION);
+    glEnableVertexAttribArray(ATTRIB_UV_LOCATION);
+    glEnableVertexAttribArray(ATTRIB_COLOR_LOCATION);
+
+    mesh->ebo          = 0;
+    mesh->vbo          = vbo;
+    mesh->vao          = vao;
+
+    mesh->index_count  = 0;
+    mesh->vertex_count = (buff_size / sizeof(float)) / VERTEX_STRIDE;
+    return true;
+}
+
+Mesh_t createCubeMesh(float width, float height, float depth, Color color, GLProgram_t prog) {
+
+#   define NORMAL_
+#   define UV_
+#   define COLOR_
+    float vbo_buffer[] = {
+        // BACK FACE
+        -0.5f, -0.5f, -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+        0.5f, -0.5f,  -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 1.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+        0.5f,  0.5f,  -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        0.5f,  0.5f,  -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f,  0.5f, -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 0.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f, -0.5f, -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+        
+        // FRONT FACE
+        -0.5f, -0.5f,  0.5f, NORMAL_ 0.0f, 0.0f, 1.0f, UV_ 0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+         0.5f, -0.5f,  0.5f, NORMAL_ 0.0f, 0.0f, 1.0f, UV_ 1.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+         0.5f,  0.5f,  0.5f, NORMAL_ 0.0f, 0.0f, 1.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+         0.5f,  0.5f,  0.5f, NORMAL_ 0.0f, 0.0f, 1.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f,  0.5f,  0.5f, NORMAL_ 0.0f, 0.0f, 1.0f, UV_ 0.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f, -0.5f,  0.5f, NORMAL_ 0.0f, 0.0f, 1.0f, UV_ 0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+
+        // LEFT FACE
+        -0.5f,  0.5f,  0.5f, NORMAL_ -1.0f, 0.0f, 0.0f, UV_ 0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f,  0.5f, -0.5f, NORMAL_ -1.0f, 0.0f, 0.0f, UV_ 1.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f, -0.5f, -0.5f, NORMAL_ -1.0f, 0.0f, 0.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f, -0.5f, -0.5f, NORMAL_ -1.0f, 0.0f, 0.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f, -0.5f,  0.5f, NORMAL_ -1.0f, 0.0f, 0.0f, UV_ 0.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f,  0.5f,  0.5f, NORMAL_ -1.0f, 0.0f, 0.0f, UV_ 0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+
+        // RIGHT FACE
+        0.5f,  0.5f,  0.5f, NORMAL_ 1.0f, 0.0f, 0.0f, UV_  0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+        0.5f,  0.5f, -0.5f, NORMAL_ 1.0f, 0.0f, 0.0f, UV_  1.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+        0.5f, -0.5f, -0.5f, NORMAL_ 1.0f, 0.0f, 0.0f, UV_  1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        0.5f, -0.5f, -0.5f, NORMAL_ 1.0f, 0.0f, 0.0f, UV_  1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        0.5f, -0.5f,  0.5f, NORMAL_ 1.0f, 0.0f, 0.0f, UV_  0.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        0.5f,  0.5f,  0.5f, NORMAL_ 1.0f, 0.0f, 0.0f, UV_  0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+        // BOTTOM FACE
+        -0.5f, -0.5f, -0.5f, NORMAL_ 0.0f, -1.0f, 0.0f, UV_ 0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+         0.5f, -0.5f, -0.5f, NORMAL_ 0.0f, -1.0f, 0.0f, UV_ 1.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+         0.5f, -0.5f,  0.5f, NORMAL_ 0.0f, -1.0f, 0.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+         0.5f, -0.5f,  0.5f, NORMAL_ 0.0f, -1.0f, 0.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f, -0.5f,  0.5f, NORMAL_ 0.0f, -1.0f, 0.0f, UV_ 0.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f, -0.5f, -0.5f, NORMAL_ 0.0f, -1.0f, 0.0f, UV_ 0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+
+        // TOP FACE
+        0.5f,   0.5f, -0.5f, NORMAL_ 0.0f, 1.0f, 0.0f,  UV_ 0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f,  0.5f, -0.5f, NORMAL_ 0.0f, 1.0f, 0.0f, UV_ 1.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+         0.5f,  0.5f,  0.5f, NORMAL_ 0.0f, 1.0f, 0.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+         0.5f,  0.5f,  0.5f, NORMAL_ 0.0f, 1.0f, 0.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f,  0.5f,  0.5f, NORMAL_ 0.0f, 1.0f, 0.0f, UV_ 0.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+        -0.5f,  0.5f, -0.5f, NORMAL_ 0.0f, 1.0f, 0.0f, UV_ 0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+    };
+
+    Mesh_t mesh;
+    mesh.transform = (Transform) {
+        .rot_mode = DEFAULT_ROTMODE,
+        .position = {.0f},
+        .rotation = {.0f},
+        .scale    = {1.0f, 1.0f, 1.0f}
+    };
+
+    Mat4 localScale     = mat_scale(width, height, depth);
+    int vertCount       = (sizeof(vbo_buffer) / sizeof(float)) / VERTEX_STRIDE;
+
+    // apply scale
+    for (int i = 0; i < vertCount; ++i) {
+        vbo_buffer[i * VERTEX_STRIDE + 0] *= width;
+        vbo_buffer[i * VERTEX_STRIDE + 1] *= height;
+        vbo_buffer[i * VERTEX_STRIDE + 2] *= depth;
+    }
+
+    if (prog.program) {
+        mesh.program = prog;
+    }
+
+    if (!meshSetupGLBuffers(&mesh, vbo_buffer, sizeof(vbo_buffer))) 
+        return (Mesh_t) {0};
+
+    return mesh;
+
+#   undef NORMAL_
+#   undef UV_
+#   undef COLOR_
+}
+
 Mesh_t createTriangleMesh(vec3 v1, vec3 v2, vec3 v3, Color color, GLProgram_t prog) {
     Mesh_t mesh;
 
@@ -1028,35 +1154,9 @@ Mesh_t createTriangleMesh(vec3 v1, vec3 v2, vec3 v3, Color color, GLProgram_t pr
         v3.x, v3.y, v3.z, NORMAL_ normal.x, normal.y, normal.z, UV_ 0.0f, 1.0f, COLOR_ color.r, color.g, color.b,
     };
 
-    GLuint vao, vbo;
-    glGenBuffers(1, &vbo);
-    glGenVertexArrays(1, &vao);
+    if (!meshSetupGLBuffers(&mesh, vbo_buffer, sizeof(vbo_buffer))) 
+        return (Mesh_t) {0};
     
-    if (!vao || !vbo) return (Mesh_t) {0};
-
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vbo_buffer), vbo_buffer, GL_STATIC_DRAW);
-
-    glBindVertexArray(vao);
-
-    // use same buffer for all attributes.
-    glVertexAttribPointer(ATTRIB_POSITION_LOCATION, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*) 0);
-    glVertexAttribPointer(ATTRIB_NORMAL_LOCATION, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*) (3 * sizeof(float)));
-    glVertexAttribPointer(ATTRIB_UV_LOCATION, 2, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*) (6 * sizeof(float)));
-    glVertexAttribPointer(ATTRIB_COLOR_LOCATION, 4, GL_FLOAT, GL_FALSE, 11 * sizeof(float), (void*) (8 * sizeof(float)));
-
-    glEnableVertexAttribArray(ATTRIB_POSITION_LOCATION);
-    glEnableVertexAttribArray(ATTRIB_NORMAL_LOCATION);
-    glEnableVertexAttribArray(ATTRIB_UV_LOCATION);
-    glEnableVertexAttribArray(ATTRIB_COLOR_LOCATION);
-
-    mesh.ebo          = 0;
-    mesh.vbo          = vbo;
-    mesh.vao          = vao;
-
-    mesh.index_count  = 0;
-    mesh.vertex_count = 3;
-
     return mesh;
 
 #   undef NORMAL_
@@ -1164,7 +1264,7 @@ void camera_compute_projmatrix0(Camera_t* camera) {
 }
 
 void camera_compute_projmatrix(Camera_t* camera) {
-    float aspect = CANVAS_WIDTH / CANVAS_HEIGHT; // for now.
+    float aspect = (float)CANVAS_WIDTH / (float)CANVAS_HEIGHT; // for now.
     
     float height =  2.0f * camera->n * tanf(camera->fov / 2.0f);
     float width  = height * aspect;
