@@ -14,6 +14,7 @@
         "inttypes.h": "c",
         "windows.h": "c",
         "time.h": "c",
-        "flag_getter.h": "c"
+        "flag_getter.h": "c",
+        "*.rh": "c"
     }
 }

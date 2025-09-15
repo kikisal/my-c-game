@@ -71,7 +71,7 @@ typedef struct vec3_st {
     float x, y, z;
 } vec3;
 
-MATDEF vec3 mat_transform(vec3 v, Mat4 m);
+MATDEF vec3 mat_transform(vec3 v, Mat4 m, float v_w);
 
 #define vec3_init(...) (vec3) {__VA_ARGS__}
 
@@ -104,6 +104,16 @@ typedef struct Color_st {
 
 typedef struct Window_st * Window;
 
+struct Window_st {
+    void* _winHandle;
+    char* title;
+    int   width;
+    int   height;
+    int   x;
+    int   y;
+    bool  focused;
+};
+
 static bool     init_platform();
 static Window   create_window(size_t width, size_t height, const char* title);
 static bool     create_opengl_context(Window window);
@@ -125,11 +135,14 @@ struct Camera_st {
     vec3 target;
     vec3 up;
 
+    vec3 forward;
+
     float n;
     float f;
     float fov;
 
     bool needs_update;
+    Mat4 matrix;
     Mat4 view_matrix;
     Mat4 proj_matrix;
     Mat4 combined_matrix;
@@ -194,9 +207,31 @@ Mesh_t      createCubeMesh(float width, float height, float depth, Color color, 
 void        renderMesh(Mesh_t m, Camera_t* camera);
 
 Camera_t    camera_init(vec3 position, vec3 target, float near_plane, float far_plane, float fov);
+void        update_camera(Camera_t* camera);
 void        camera_compute_matrices(Camera_t* camera);
 void        camera_compute_viewmatrix(Camera_t* camera);
 void        camera_compute_projmatrix(Camera_t* camera);
+vec3        screen_to_camera(Camera_t* camera, long screenX, long screenY);
+
+
+// keyboard and mouse
+struct KeyState_st {
+    uint64_t key;
+    bool     down; 
+};
+
+typedef struct KeyState_st KeyState;
+
+struct MouseState_st {
+    long deltaX;
+    long deltaY;
+    long x, y;
+    long oldX, oldY;    
+};
+
+typedef struct MouseState_st MouseState;
+
+void print_mouse_state();
 
 // -- engine constants. --
 
@@ -209,15 +244,34 @@ void        camera_compute_projmatrix(Camera_t* camera);
 #define UNIFORM_VIEW_MATRIX  "view_mat"
 #define UNIFORM_PROJ_MATRIX  "proj_mat"
 
-Mat4 view_matrix;
-Mat4 proj_matrix;
+#define MOUSE_SENSITIVITY 10.0f
+
+Camera_t camera;
+
+#define KEYMAP_COUNT sizeof(keyState) / sizeof(KeyState)
+
+KeyState keyState[] = {
+    {.key = 'W',       .down = false},
+    {.key = 'A',       .down = false},
+    {.key = 'S',       .down = false},
+    {.key = 'D',       .down = false},
+    {.key = VK_SPACE,  .down = false},
+    {.key = VK_LSHIFT, .down = false},
+};
+
+MouseState mouseState;
+Window window;
 
 int main() {
     AudioDevice* device = audio_init_device();
     init_platform();
 
-    Window window = create_window(CANVAS_WIDTH, CANVAS_HEIGHT, GAME_TITLE);
-    
+    window = create_window(CANVAS_WIDTH, CANVAS_HEIGHT, GAME_TITLE);
+    if (!window) {
+        printf("create_window() failed! Quitting.\n");
+        return -1;
+    }
+
     if (!create_opengl_context(window)) {
         printf("create_opengl_context() failed! Quitting.\n");
         return -1;
@@ -240,10 +294,6 @@ int main() {
         return -1;
     }
 
-    // for now.
-    view_matrix = mat4_identity();
-    proj_matrix = mat4_identity();
-    
     Mat4 world = mat4_identity();
 
     GLuint quadProg         = createShaderProgramGL_(quad_vs_file, quad_fs_file);
@@ -252,6 +302,7 @@ int main() {
     GLProgram_t defaultProg = createShaderProgramGL(default_vs_file, default_fs_file);
 
     Mesh_t cube      = createCubeMesh(1.0f, 1.0f, 1.0f, (Color) {1.0f, 0.0f, 0.0f}, defaultProg);
+    Mesh_t floor     = createCubeMesh(10.0f, 0.1f, 10.0f, (Color) {.4f, .4f, .4f}, defaultProg);
     Mesh_t lightCube = createCubeMesh(1.0f, 1.0f, 1.0f, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
 
     lightCube.transform.position.z = -1.0f;
@@ -259,10 +310,10 @@ int main() {
     lightCube.transform.scale.x    = .2f;
     lightCube.transform.scale.y    = .2f;
     lightCube.transform.scale.z    = .2f;
-    
+    floor.transform.position.y     = -.6f; 
     float fov = 60.0f;
-    Camera_t camera = camera_init(
-        vec3_init(0.0f, 0.0f, 1.0f), 
+    camera = camera_init(
+        vec3_init(-2.0f, 1.0f, 3.0f), 
         vec3_init(0.0f),
         0.1f,
         1000.0f,
@@ -279,32 +330,77 @@ int main() {
 
     glViewport(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 #if defined(_WIN32)
+    POINT mouseCenter;
+
     MSG msg;
+    {
+        RECT rect;
+        GetClientRect(window->_winHandle, &rect);
+
+        mouseCenter.x = (rect.right - rect.left) / 2;
+        mouseCenter.y = (rect.bottom - rect.top) / 2;
+        ClientToScreen(window->_winHandle, &mouseCenter);
+        SetCursorPos(mouseCenter.x, mouseCenter.y);
+
+        mouseState.x      = mouseCenter.x;
+        mouseState.y      = mouseCenter.y;        
+        mouseState.deltaX = 0;
+        mouseState.deltaY = 0;
+        mouseState.oldX   = mouseCenter.x;
+        mouseState.oldY   = mouseCenter.y;
+    }
 #endif
 
-    glEnable(GL_DEPTH);
+    glEnable(GL_DEPTH_TEST);
+    // glEnable(GL_CULL_FACE);
 
     while (true) {
         uint64_t begin = get_time_ns();
 
     #if defined(_WIN32)
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) return 0;
+
+            switch(msg.message) {
+                case WM_QUIT: return 0;
+            }
+            
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
+
+        POINT pt;
+        if (GetCursorPos(&pt)) {
+            // ScreenToClient(window->_winHandle, &pt);
+            
+            mouseState.deltaX = pt.x - mouseCenter.x;
+            mouseState.deltaY = pt.y - mouseCenter.y;
+            mouseState.x     += mouseState.deltaX;
+            mouseState.y     += mouseState.deltaY;
+            
+            SetCursorPos(mouseCenter.x, mouseCenter.y);
+        }
+
+        if (GetForegroundWindow() != window->_winHandle) {
+            window->focused = false;
+        } else {
+            window->focused = true;
+        }
+
     #endif // defined(_WIN32)
+        
+        // print_mouse_state();
         
         // olivec_fill(canvas, 0x00);
         // game_update(canvas);
 
+        update_camera(&camera);
+
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        camera.position.x             -= .01f;
-        camera.position.y              = 1.0f;
-
+        
         renderMesh(cube, &camera);
+        renderMesh(floor, &camera);
         renderMesh(lightCube, &camera);
         
         // canvas_to_GLtexture(canvas, quadMesh.texture);
@@ -331,6 +427,7 @@ int main() {
 
     ReleaseDC((HWND) window, s_hdc);
     waveOutClose((HWAVEOUT) device);
+    DestroyWindow(window->_winHandle);
 #endif // defined(_WIN32)
     return 0;
 }
@@ -349,15 +446,22 @@ static Window create_window(size_t width, size_t height, const char* title) {
 
     RECT winRect = { 0, 0, width, height };
     AdjustWindowRect(&winRect, WS_OVERLAPPEDWINDOW, FALSE);
+    // Get screen dimensions
+    int screenWidth  = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    int winWidth     = winRect.right - winRect.left;
+    int winHeight    = winRect.bottom - winRect.top;
+
+    int winPos_x = (screenWidth - winWidth) / 2;
+    int winPos_y = (screenHeight - winHeight) / 2;
   
     HWND hwnd = CreateWindowEx(
         0,
         GAME_TITLE_CLASS,
         title,
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT,
-        winRect.right - winRect.left,
-        winRect.bottom - winRect.top,
+        winPos_x, winPos_y,
+        winWidth, winHeight,
         NULL, NULL,
         hInstance,
         NULL
@@ -373,6 +477,7 @@ static Window create_window(size_t width, size_t height, const char* title) {
     }
 
     ShowWindow(hwnd, SW_SHOWNORMAL);
+    ShowCursor(FALSE);
 
     // setup bit map info structure
     s_Bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
@@ -382,7 +487,25 @@ static Window create_window(size_t width, size_t height, const char* title) {
     s_Bmi.bmiHeader.biBitCount    = 32;
     s_Bmi.bmiHeader.biCompression = BI_RGB;
 
-    return (Window)hwnd;
+    Window wdw      = malloc(sizeof(struct Window_st));
+    if (!wdw) return NULL;
+    
+    wdw->_winHandle = hwnd;
+
+    wdw->title      = (char*)title;
+    wdw->width      = winWidth;
+    wdw->height     = winHeight;
+    wdw->x          = winPos_x;
+    wdw->y          = winPos_y;
+
+    RAWINPUTDEVICE rid;
+    rid.usUsagePage = 0x01;
+    rid.usUsage     = 0x02;
+    rid.dwFlags     = RIDEV_INPUTSINK;
+    rid.hwndTarget  = hwnd;
+    RegisterRawInputDevices(&rid, 1, sizeof(rid));
+
+    return wdw;
 }
 
 static bool init_platform() {
@@ -394,12 +517,64 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
+        case WM_INPUT:
+        {
+            UINT dwSize = 0;
+            GetRawInputData((HRAWINPUT)lParam, RID_INPUT, NULL, &dwSize, sizeof(RAWINPUTHEADER));
+            LPBYTE lpb = (LPBYTE)malloc(dwSize);
+
+            if (lpb && GetRawInputData((HRAWINPUT)lParam, RID_INPUT, lpb, &dwSize, sizeof(RAWINPUTHEADER)) == dwSize) {
+                RAWINPUT* raw = (RAWINPUT*)lpb;
+
+                if (raw->header.dwType == RIM_TYPEMOUSE) {
+                    // mouseState.deltaX = raw->data.mouse.lLastX;
+                    // mouseState.deltaY = raw->data.mouse.lLastY;
+                }
+            }
+            free(lpb);
+            break;
+        }
+
+        case WM_KEYDOWN:
+        {
+            UINT vkCode = (UINT)wParam;
+
+            if (vkCode == VK_SHIFT) {
+                UINT scancode = (lParam >> 16) & 0xFF;
+                vkCode = MapVirtualKey(scancode, MAPVK_VSC_TO_VK_EX);
+            }
+
+            for (int i = 0; i < KEYMAP_COUNT; ++i) {
+                if (keyState[i].key == vkCode) {
+                    keyState[i].down = true;
+                    break;
+                }
+            }
+            break;
+        }
+
+        case WM_KEYUP: {
+            UINT vkCode = (UINT)wParam;
+
+            if (vkCode == VK_SHIFT) {
+                UINT scancode = (lParam >> 16) & 0xFF;
+                vkCode = MapVirtualKey(scancode, MAPVK_VSC_TO_VK_EX);
+            }
+
+            for (int i = 0; i < KEYMAP_COUNT; ++i) {
+                if (keyState[i].key == vkCode) {
+                    keyState[i].down = false;
+                    break;
+                }
+            }
+            break;
+        }
     }
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
 static bool create_opengl_context(Window window) {
-    s_hdc   = GetDC((HWND)window);
+    s_hdc   = GetDC((HWND)window->_winHandle);
 
     PIXELFORMATDESCRIPTOR pfd = {
         sizeof(PIXELFORMATDESCRIPTOR),
@@ -419,7 +594,6 @@ static bool create_opengl_context(Window window) {
         0,
         0, 0, 0
     };
-
 
     int pixelFormat = ChoosePixelFormat(s_hdc, &pfd);
     SetPixelFormat(s_hdc, pixelFormat, &pfd);
@@ -728,12 +902,12 @@ MATDEF Mat4 mat_rotate_z(float angle) {
     return result;
 }
 
-MATDEF vec3 mat_transform(vec3 v, Mat4 m) {
+MATDEF vec3 mat_transform(vec3 v, Mat4 m, float v_w) {
     // assumes w = 1
     return (vec3) {
-        .x = m.m00 * v.x + m.m01 * v.y + m.m02 * v.z + m.m03,
-        .y = m.m10 * v.x + m.m11 * v.y + m.m12 * v.z + m.m13,
-        .z = m.m20 * v.x + m.m21 * v.y + m.m22 * v.z + m.m23,
+        .x = m.m00 * v.x + m.m01 * v.y + m.m02 * v.z + m.m03 * v_w,
+        .y = m.m10 * v.x + m.m11 * v.y + m.m12 * v.z + m.m13 * v_w,
+        .z = m.m20 * v.x + m.m21 * v.y + m.m22 * v.z + m.m23 * v_w,
     };
 }
 
@@ -1221,56 +1395,138 @@ Camera_t camera_init(vec3 position, vec3 target, float near_plane, float far_pla
     };
 }
 
-void camera_compute_viewmatrix(Camera_t* camera) {
-    camera->view_matrix = mat_translate(camera->position.x, camera->position.y, camera->position.z);
-    vec3 z_axis = vec3_norm(vec3_sub(camera->position, camera->target));
-    vec3 x_axis = vec3_norm(vec3_cross(camera->up, z_axis));
-    vec3 y_axis = vec3_norm(vec3_cross(z_axis, x_axis));
-    camera->view_matrix.m00 = x_axis.x;
-    camera->view_matrix.m10 = x_axis.y;
-    camera->view_matrix.m20 = x_axis.z;
+void update_camera(Camera_t * camera) {
+    if (!camera) return;
 
-    camera->view_matrix.m01 = y_axis.x;
-    camera->view_matrix.m11 = y_axis.y;
-    camera->view_matrix.m21 = y_axis.z;
+    float cameraSpeed = .05f;
 
-    camera->view_matrix.m02 = z_axis.x;
-    camera->view_matrix.m12 = z_axis.y;
-    camera->view_matrix.m22 = z_axis.z;
+    vec3 forwardDelta = screen_to_camera(camera, mouseState.deltaX + CANVAS_WIDTH / 2, mouseState.deltaY + CANVAS_HEIGHT / 2);
+    forwardDelta.x = forwardDelta.x * MOUSE_SENSITIVITY;
+    forwardDelta.y = forwardDelta.y * MOUSE_SENSITIVITY;
 
-    camera->view_matrix = mat_inv(camera->view_matrix);
+
+    camera->forward.x += forwardDelta.x;
+    camera->forward.y += forwardDelta.y;
+    camera->forward    = vec3_norm(camera->forward);
+
+    camera->target = mat_transform(camera->forward, camera->matrix, 1.0f);
+    // reset camera forward vector
+    camera->forward = (vec3) {0.0f, 0.0f, -1.0f};
+
+    camera_compute_viewmatrix(camera);
+
+    for (int i = 0; i < KEYMAP_COUNT; ++i) {
+        if (!keyState[i].down) continue;
+
+        vec3 forward = {
+            .x = -camera->matrix.m02, 
+            .y = -camera->matrix.m12, 
+            .z = -camera->matrix.m22,
+        };
+
+        vec3 right = {
+            .x = camera->matrix.m00, 
+            .y = camera->matrix.m10, 
+            .z = camera->matrix.m20,
+        };
+
+        vec3 up = {
+            .x  = camera->matrix.m01, 
+            .y  = camera->matrix.m11, 
+            .z  = camera->matrix.m21,
+        };
+
+        switch (keyState[i].key) {
+            case 'W': {
+                camera->position.x += forward.x * cameraSpeed;
+                camera->position.y += forward.y * cameraSpeed;
+                camera->position.z += forward.z * cameraSpeed;
+                break;
+            }                
+            case 'S': {
+                camera->position.x += -forward.x * cameraSpeed;
+                camera->position.y += -forward.y * cameraSpeed;
+                camera->position.z += -forward.z * cameraSpeed;
+                break;
+            }
+            case 'A': {
+                camera->position.x += -right.x * cameraSpeed;
+                camera->position.y += -right.y * cameraSpeed;
+                camera->position.z += -right.z * cameraSpeed;
+                break;
+            }
+            case 'D':
+            {
+                camera->position.x += right.x * cameraSpeed;
+                camera->position.y += right.y * cameraSpeed;
+                camera->position.z += right.z * cameraSpeed;
+                break;
+            }
+            case VK_SPACE: {
+                camera->position.x += up.x * cameraSpeed;
+                camera->position.y += up.y * cameraSpeed;
+                camera->position.z += up.z * cameraSpeed;
+                break;
+            }
+            case VK_LSHIFT: {
+                camera->position.x += -up.x * cameraSpeed;
+                camera->position.y += -up.y * cameraSpeed;
+                camera->position.z += -up.z * cameraSpeed;
+                break;
+            }
+        }
+
+        camera->target = vec3_add(camera->position, forward);
+
+    }
 }
 
-void camera_compute_projmatrix0(Camera_t* camera) {
-    float aspect = CANVAS_WIDTH / CANVAS_HEIGHT; // for now.
-    float height =  1.0f/aspect;
-
-    float left   = -.5;
-    float right  =  .5;
-    float top    =  height * .5;
-    float bottom = -height * .5;
-
-    camera->proj_matrix     = mat4_identity();
-    camera->proj_matrix.m00 = 2.0f * camera->n;
-    camera->proj_matrix.m11 = 2.0f * camera->n / height;
-    camera->proj_matrix.m22 = -(camera->f + camera->n)/(camera->f - camera->n);
-    camera->proj_matrix.m23 = (-2.0f * camera->f * camera->n) / (camera->f - camera->n);
+void camera_compute_viewmatrix(Camera_t* camera) {
+    vec3 z_axis         = vec3_norm(vec3_sub(camera->position, camera->target));
+    vec3 x_axis         = vec3_norm(vec3_cross(camera->up, z_axis));
+    vec3 y_axis         = vec3_norm(vec3_cross(z_axis, x_axis));
     
-    camera->proj_matrix.m02 = (right + left) / 1.0f;
-    camera->proj_matrix.m12 = (top + bottom) / height;
+    camera->matrix      = mat_translate(camera->position.x, camera->position.y, camera->position.z);
+    camera->matrix.m00  = x_axis.x;
+    camera->matrix.m10  = x_axis.y;
+    camera->matrix.m20  = x_axis.z;
+
+    camera->matrix.m01  = y_axis.x;
+    camera->matrix.m11  = y_axis.y;
+    camera->matrix.m21  = y_axis.z;
+
+    camera->matrix.m02  = z_axis.x;
+    camera->matrix.m12  = z_axis.y;
+    camera->matrix.m22  = z_axis.z;
     
-    camera->proj_matrix.m32 = -1.0f;
-    camera->proj_matrix.m33 = 0.0f;
+    camera->view_matrix = mat_inv(camera->matrix);
+}
+
+vec3 screen_to_camera(Camera_t* camera, long screenX, long screenY) {
+    float sX = screenX;
+    float sY = screenY;
+
+    // TODO: Handle dynamic screen sizes.
+    float ndcX = 2.0f*(screenX / (float)CANVAS_WIDTH) - 1.0f;
+    float ndcY = 1.0f - 2.0f*(screenY / (float)CANVAS_HEIGHT);
+
+    float w = camera->n;
+    vec3 clip = {.x = ndcX * w, .y = ndcY * w, .z = 0.0f};
+    clip.z = w * (camera->f + camera->n) / (camera->f - camera->n) + (2.0f * camera->f * camera->n) / (camera->f - camera->n);
+    Mat4 clip_to_camera = mat_inv(camera->proj_matrix);
+
+    return mat_transform(clip, clip_to_camera, w);
 }
 
 void camera_compute_projmatrix(Camera_t* camera) {
-    float aspect = (float)CANVAS_WIDTH / (float)CANVAS_HEIGHT; // for now.
+    // TODO: Handle dynamic window size changes.
+    float aspect = (float)CANVAS_WIDTH / (float)CANVAS_HEIGHT;
     
     float height =  2.0f * camera->n * tanf(camera->fov / 2.0f);
     float width  = height * aspect;
     
-    float left   = -width * .5f;
-    float right  =  width * .5f;
+    float left   = -width  * .5f;
+    float right  =  width  * .5f;
     float top    =  height * .5f;
     float bottom = -height * .5f;
 
@@ -1285,4 +1541,9 @@ void camera_compute_projmatrix(Camera_t* camera) {
     
     camera->proj_matrix.m32 = -1.0f;
     camera->proj_matrix.m33 = 0.0f;
+}
+
+void print_mouse_state()
+{
+    printf("mouse X: %d, Y: %d, dX: %d, dY: %d\n", mouseState.x, mouseState.y, mouseState.deltaX, mouseState.deltaY);
 }
