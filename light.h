@@ -58,6 +58,11 @@ LIGHTAPI Light_t* createLight(vec3 position, Color color, light_enum_t type, GLP
         .dir       = {0.0f, 0.0f, -1.0f}
     };
 
+    if (type == LIGHT_DIRECTIONAL) {
+        light.dir = vec3_norm(light.pos);
+        light.pos = vec3_init(0.0f, 0.0f, 0.0f);
+    }
+
     int index = g_lightCount;
     char uniformName[128];
    

@@ -8,7 +8,7 @@
 #define OPENGL_MAJOR_VERSION 4
 #define OPENGL_MINOR_VERSION 4
 
-#define GAME_TITLE              "My Little Game"
+#define GAME_TITLE              "Chronicles of Zarathia"
 #define CANVAS_WIDTH            (16 * 80)
 #define CANVAS_HEIGHT           (9  * 80)
 

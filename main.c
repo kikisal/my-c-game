@@ -246,24 +246,36 @@ int main() {
 
     GLProgram_t defaultProg = createShaderProgramGL(default_vs_file, default_fs_file);
 
-    sphere    = createSphereMesh(1.0f, 16, 16, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
+    QuadMesh quad = createQuadMesh(CANVAS_WIDTH, CANVAS_HEIGHT, quadProg);
+    sphere    = createSphereMesh(1.0f, 8, 8, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
     cube      = createCubeMesh(1.0f, 1.0f, 1.0f, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
     floorMesh = createCubeMesh(10.0f, 0.1f, 10.0f, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
+    floorMesh.no_color_attrib   = true;
+    floorMesh.color             = (Color) {1.0f, 1.0f, 1.0f};
 
     sphere.transform.position.x = -2.0f;
 
-    Light_t* light1 = createLight((vec3) {1.0f, 1.0f, 1.0f}, (Color) {1.0f, 1.0f, 1.0f}, LIGHT_POINT, defaultProg);
-    Light_t* light2 = createLight((vec3) {-7.0f, 7.0f, -7.0f}, (Color) {1.0f, 1.0f, 1.0f}, LIGHT_POINT, defaultProg);
+    Light_t* light1   = createLight((vec3) {1.0f, 1.0f, 1.0f}, (Color) {1.0f, 1.0f, 1.0f},   LIGHT_POINT,       defaultProg);
+    light1->intensity = 5.0f;
+    updateLight(light1, defaultProg);
+
+    Light_t* light2   = createLight((vec3) {-7.0f, 7.0f, -7.0f}, (Color) {1.0f, 1.0f, 1.0f}, LIGHT_POINT,       defaultProg);
+    Light_t* dirLight = createLight((vec3) {4.0f, -5.0f, 4.0f}, (Color) {
+        (float)0x87/255.0f, (float)0xCE/255.0f, (float)0xFA/255.0f
+    }, LIGHT_DIRECTIONAL, defaultProg);
+
     light2->intensity = 5.0f;
+    dirLight->intensity = .5f;
     updateLight(light2, defaultProg);
+    updateLight(dirLight, defaultProg);
 
     Texture_t diffuseMap                  = loadTextureFromFile("./resources/container.png");
-    Texture_t specularMap                 = loadTextureFromFile("./resources/SpecularMap.png");
+    Texture_t specularMap                 = loadTextureFromFile("./resources/SpecularMap2.png");
     cube.textures[TEXTURE_ALBEDO_TEXTURE] = diffuseMap;
     cube.textures[TEXTURE_SPECULAR_MAP]   = specularMap;
 
     light1->pos.z = -1.0f;
-    light1->pos.y =  1.0f;
+    light1->pos.y = 1.0f;
 
     cameraPosLoc  = glGetUniformLocation(defaultProg.program, "camera_pos");
 
@@ -307,9 +319,34 @@ int main() {
     }
 #endif
 
-    glEnable(GL_DEPTH_TEST);
     // glEnable(GL_CULL_FACE);
 
+    unsigned int hdrFrameBuffer;
+    GLuint hdrColorBuffer;
+    unsigned int hdrRbo;
+
+    glGenFramebuffers(1, &hdrFrameBuffer);
+    glGenTextures(1, &hdrColorBuffer);
+    glGenRenderbuffers(1, &hdrRbo);
+
+    glBindTexture(GL_TEXTURE_2D, hdrColorBuffer);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, CANVAS_WIDTH, CANVAS_HEIGHT, 0, GL_RGBA, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, hdrFrameBuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, hdrColorBuffer, 0);
+    
+    glBindRenderbuffer(GL_RENDERBUFFER, hdrRbo);
+
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, CANVAS_WIDTH, CANVAS_HEIGHT);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, hdrRbo); 
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    quad.texture  = hdrColorBuffer;
+    printf("texture loc: %d\n", quad.texture_loc);
     float time = 0.0f;
     while (true) {
         uint64_t begin = get_time_ns();
@@ -352,16 +389,30 @@ int main() {
         updateLight(light1, defaultProg);
         update_camera(&camera);
 
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        // First pass
+            
+        glEnable(GL_DEPTH_TEST);
+        glBindFramebuffer(GL_FRAMEBUFFER, hdrFrameBuffer);
+
+        glClearColor((float)0x87/255.0f, (float)0xCE/255.0f, (float)0xFA/255.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
         
         renderMesh(cube, &camera);
         renderMesh(sphere, &camera);
         renderMesh(floorMesh, &camera);
-        // renderLight(light1, &camera);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // Second pass
+        glDisable(GL_DEPTH_TEST);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Render into quad
+        renderQuad(quad);
+
         
-        // canvas_to_GLtexture(canvas, quadMesh.texture);
-        // renderQuad(quadMesh);
         SwapBuffers(s_hdc);
         
         uint64_t end = get_time_ns();
