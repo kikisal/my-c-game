@@ -1,6 +1,6 @@
 TODO:
-    Read: https://learnopengl.com/Lighting/Light-casters
-        Section: Directional Light
+    Read: https://learnopengl.com/Advanced-Lighting/Normal-Mapping
+        Section: Normal Mapping
     Implement Blinn-Model lighting
     Then implement point shadows:
         - https://learnopengl.com/Advanced-Lighting/Shadows/Point-Shadows
