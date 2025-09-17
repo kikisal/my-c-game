@@ -1,0 +1,1 @@
+gcc main.c -o build/main build/glad.o build/game.o -lwinmm -lgdi32 -lopengl32

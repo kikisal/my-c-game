@@ -23,7 +23,8 @@ void main() {
     frag_local_pos  = aPos;
     frag_world_pos  = vec3(world_mat * vec4(aPos, 1.0));
     frag_local_norm = aNormal;
-    frag_norm       = mat3(world_mat) * aNormal;
+    frag_norm       = mat3(transpose(inverse(world_mat))) * aNormal;
+    
     frag_uv         = aUv;
     frag_color      = aColor;
 }

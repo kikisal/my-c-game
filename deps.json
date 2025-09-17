@@ -1,6 +1,7 @@
 {
     "deps": {
         "olivec": "https://github.com/tsoding/olive.c",
-        "glad": ""
+        "glad": "",
+        "stb_image": ""
     }
 }

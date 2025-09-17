@@ -1,7 +1,6 @@
 TODO:
-    Keep reading: https://learnopengl.com/Lighting/Colors
-        Section:    A lighting scene
-
+    Read: https://learnopengl.com/Lighting/Light-casters
+        Section: Directional Light
     Implement Blinn-Model lighting
     Then implement point shadows:
         - https://learnopengl.com/Advanced-Lighting/Shadows/Point-Shadows

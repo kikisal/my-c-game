@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include <math.h>
 #include <stdbool.h>
+#include <assert.h>
+
+#define PAR_SHAPES_IMPLEMENTATION
+#include "deps/par_shapes/par_shapes.h"    // Shapes 3d parametric generation
 
 #include "game.h"
 
@@ -43,64 +47,8 @@ static HINSTANCE hInstance;
 #define OLIVEC_IMPLEMENTATION
 #include "deps/olivec/olive.c"
 
-#define EPS 0.00001f
-
-#define degtorad(x) M_PI * (x) / 180.0f
-// mat lib
-typedef struct Mat4_st Mat4;
-
-struct Mat4_st {
-    float m00, m01, m02, m03,
-          m10, m11, m12, m13,
-          m20, m21, m22, m23,
-          m30, m31, m32, m33;
-};
-
-#define MATDEF static
-
-MATDEF Mat4 mat_inv(Mat4 m);
-MATDEF Mat4 mat_mul(Mat4 m1, Mat4 m2);
-MATDEF Mat4 mat4_identity();
-MATDEF Mat4 mat_translate(float x, float y, float z);
-MATDEF Mat4 mat_scale(float x, float y, float z);
-MATDEF Mat4 mat_rotate_x(float angle);
-MATDEF Mat4 mat_rotate_y(float angle);
-MATDEF Mat4 mat_rotate_z(float angle);
-
-typedef struct vec3_st {
-    float x, y, z;
-} vec3;
-
-MATDEF vec3 mat_transform(vec3 v, Mat4 m, float v_w);
-
-#define vec3_init(...) (vec3) {__VA_ARGS__}
-
-vec3 vec3_add(vec3 a, vec3 b);
-vec3 vec3_sub(vec3 a, vec3 b);
-vec3 vec3_norm(vec3 v);
-vec3 vec3_cross(vec3 side1, vec3 side2);
-
-typedef struct Quaternion_st {
-    float x, y, z, w;
-} Quaternion;
-
-Quaternion quat_add(Quaternion a, Quaternion b);
-Quaternion quat_sub(Quaternion a, Quaternion b);
-Quaternion quat_mul(Quaternion a, Quaternion b);
-Quaternion quat_normalize(Quaternion q);
-Quaternion quat_from_axis_angle(vec3 axis, float angle);
-Quaternion quat_rotate(vec3 direction, float angle);
-Mat4       quat_to_mat4(Quaternion q);
-Quaternion quat_inverse(Quaternion q);
-
-typedef enum rot_mode_enum {
-    ROTMODE_EULER,
-    ROTMODE_QUATERNION
-} rot_mode_t;
-
-typedef struct Color_st {
-    float r, g, b, a;
-} Color;
+#define ENGINE_MATH_IMPLEMENTATION
+#include "engine_math.h"
 
 typedef struct Window_st * Window;
 
@@ -120,13 +68,12 @@ static bool     create_opengl_context(Window window);
 
 GLuint          compile_shader(const char* src, GLenum type);
 
-static Olivec_Canvas canvas;
+#define FILE_IMPLEMENTATION
+#include "file.h"
 
-// simple shader sources
+#define GLGFX_IMPLEMENTATION
+#include "gl_gfx.h"
 
-
-typedef struct GLProgram_st GLProgram_t;
-typedef struct File_st      File_t;
 typedef struct QuadMesh_st  QuadMesh;
 typedef struct Camera_st Camera_t;
 
@@ -148,20 +95,6 @@ struct Camera_st {
     Mat4 combined_matrix;
 };
 
-struct File_st {
-    char*       data;
-    size_t      size;
-    const char* file_path;
-};
-
-File_t      read_file(const char* filepath);
-
-struct GLProgram_st {
-    GLuint program;
-    GLint world_mat_loc;
-    GLint view_mat_loc;
-    GLint proj_mat_loc;
-};
 
 struct QuadMesh_st {
     GLuint program;
@@ -183,6 +116,8 @@ struct Transform_st {
     rot_mode_t rot_mode;
 };
 
+// Mesh module
+
 struct Mesh_st {
     GLProgram_t program;
     GLuint      vao;
@@ -192,17 +127,21 @@ struct Mesh_st {
     size_t      vertex_count;
     Transform   transform;
     Mat4        localToWorld;
+    Texture_t   textures[TEXTURE_COUNT];
+    GLint       uniform_texture_locs[TEXTURE_COUNT];
+    bool        no_color_attrib;
+    Color       color;
 };
 
-void        canvas_to_GLtexture(Olivec_Canvas src, GLint dest);
 void        setQuadMeshProgram(QuadMesh* mesh, GLuint program);
 void        renderQuad(QuadMesh mesh);
-GLuint      createShaderProgramGL_(File_t vs_file, File_t fs_file);
-GLProgram_t createShaderProgramGL(File_t vs_file, File_t fs_file);
 
 bool        meshSetupGLBuffers(Mesh_t * mesh, float* vbo_buffer, size_t buff_size);
+bool        meshSetupGLBuffers_Raylib(Mesh_t* mesh, float* vertices, float* normals, float* texcoords, float vertex_count);
+void        meshInit(Mesh_t* mesh);
 QuadMesh    createQuadMesh(size_t texture_width, size_t texture_height, GLuint program);
 Mesh_t      createTriangleMesh(vec3 v1, vec3 v2, vec3 v3, Color color, GLProgram_t program);
+Mesh_t      createSphereMesh(float radius, int rings, int slices, Color color, GLProgram_t program);
 Mesh_t      createCubeMesh(float width, float height, float depth, Color color, GLProgram_t program);
 void        renderMesh(Mesh_t m, Camera_t* camera);
 
@@ -212,6 +151,16 @@ void        camera_compute_matrices(Camera_t* camera);
 void        camera_compute_viewmatrix(Camera_t* camera);
 void        camera_compute_projmatrix(Camera_t* camera);
 vec3        screen_to_camera(Camera_t* camera, long screenX, long screenY);
+
+#define LIGHT_IMPLEMENTATION
+#include "light.h"
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "deps/stb_image/stb_image.h"
+
+// io utils
+
+Texture_t loadTextureFromFile(const char * filePath);
 
 
 // keyboard and mouse
@@ -235,15 +184,6 @@ void print_mouse_state();
 
 // -- engine constants. --
 
-#define ATTRIB_POSITION_LOCATION    0
-#define ATTRIB_NORMAL_LOCATION      1
-#define ATTRIB_UV_LOCATION          2
-#define ATTRIB_COLOR_LOCATION       3
-
-#define UNIFORM_WORLD_MATRIX "world_mat"
-#define UNIFORM_VIEW_MATRIX  "view_mat"
-#define UNIFORM_PROJ_MATRIX  "proj_mat"
-
 #define MOUSE_SENSITIVITY 10.0f
 
 Camera_t camera;
@@ -261,6 +201,11 @@ KeyState keyState[] = {
 
 MouseState mouseState;
 Window window;
+
+GLint  cameraPosLoc;
+Mesh_t cube;
+Mesh_t sphere;
+Mesh_t floorMesh;
 
 int main() {
     AudioDevice* device = audio_init_device();
@@ -301,31 +246,41 @@ int main() {
 
     GLProgram_t defaultProg = createShaderProgramGL(default_vs_file, default_fs_file);
 
-    Mesh_t cube      = createCubeMesh(1.0f, 1.0f, 1.0f, (Color) {1.0f, 0.0f, 0.0f}, defaultProg);
-    Mesh_t floor     = createCubeMesh(10.0f, 0.1f, 10.0f, (Color) {.4f, .4f, .4f}, defaultProg);
-    Mesh_t lightCube = createCubeMesh(1.0f, 1.0f, 1.0f, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
+    sphere    = createSphereMesh(1.0f, 16, 16, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
+    cube      = createCubeMesh(1.0f, 1.0f, 1.0f, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
+    floorMesh = createCubeMesh(10.0f, 0.1f, 10.0f, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
 
-    lightCube.transform.position.z = -1.0f;
-    lightCube.transform.position.y = 1.0f;
-    lightCube.transform.scale.x    = .2f;
-    lightCube.transform.scale.y    = .2f;
-    lightCube.transform.scale.z    = .2f;
-    floor.transform.position.y     = -.6f; 
-    float fov = 60.0f;
+    sphere.transform.position.x = -2.0f;
+
+    Light_t* light1 = createLight((vec3) {1.0f, 1.0f, 1.0f}, (Color) {1.0f, 1.0f, 1.0f}, LIGHT_POINT, defaultProg);
+    Light_t* light2 = createLight((vec3) {-7.0f, 7.0f, -7.0f}, (Color) {1.0f, 1.0f, 1.0f}, LIGHT_POINT, defaultProg);
+    light2->intensity = 5.0f;
+    updateLight(light2, defaultProg);
+
+    Texture_t diffuseMap                  = loadTextureFromFile("./resources/container.png");
+    Texture_t specularMap                 = loadTextureFromFile("./resources/SpecularMap.png");
+    cube.textures[TEXTURE_ALBEDO_TEXTURE] = diffuseMap;
+    cube.textures[TEXTURE_SPECULAR_MAP]   = specularMap;
+
+    light1->pos.z = -1.0f;
+    light1->pos.y =  1.0f;
+
+    cameraPosLoc  = glGetUniformLocation(defaultProg.program, "camera_pos");
+
+    glUseProgram(defaultProg.program);
+    glUniform3f(cameraPosLoc, camera.position.x, camera.position.y, camera.position.z);    
+    glUseProgram(0);
+
+    floorMesh.transform.position.y     = -.6f;
+
     camera = camera_init(
         vec3_init(-2.0f, 1.0f, 3.0f), 
         vec3_init(0.0f),
         0.1f,
         1000.0f,
-        degtorad(fov)
+        degtorad(60.0f)
     );
 
-    canvas = olivec_canvas(
-        malloc(CANVAS_WIDTH * CANVAS_HEIGHT * sizeof(uint32_t)),
-        CANVAS_WIDTH, CANVAS_HEIGHT, CANVAS_WIDTH
-    );
-
-    game_init(canvas);
     int sleepDelay = (int)((1.0f/(float)FPS)*1000.0f);
 
     glViewport(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
@@ -333,6 +288,7 @@ int main() {
     POINT mouseCenter;
 
     MSG msg;
+    // set cursor to window center
     {
         RECT rect;
         GetClientRect(window->_winHandle, &rect);
@@ -343,7 +299,7 @@ int main() {
         SetCursorPos(mouseCenter.x, mouseCenter.y);
 
         mouseState.x      = mouseCenter.x;
-        mouseState.y      = mouseCenter.y;        
+        mouseState.y      = mouseCenter.y;
         mouseState.deltaX = 0;
         mouseState.deltaY = 0;
         mouseState.oldX   = mouseCenter.x;
@@ -354,6 +310,7 @@ int main() {
     glEnable(GL_DEPTH_TEST);
     // glEnable(GL_CULL_FACE);
 
+    float time = 0.0f;
     while (true) {
         uint64_t begin = get_time_ns();
 
@@ -388,20 +345,20 @@ int main() {
 
     #endif // defined(_WIN32)
         
-        // print_mouse_state();
+        time += .001f;
+        light1->pos.x = 4.0f * cosf(time * 2 * M_PI * 5.0f);
+        light1->pos.z = 4.0f * sinf(time * 2 * M_PI * 5.0f);
         
-        // olivec_fill(canvas, 0x00);
-        // game_update(canvas);
-
+        updateLight(light1, defaultProg);
         update_camera(&camera);
 
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
         
         renderMesh(cube, &camera);
-        renderMesh(floor, &camera);
-        renderMesh(lightCube, &camera);
+        renderMesh(sphere, &camera);
+        renderMesh(floorMesh, &camera);
+        // renderLight(light1, &camera);
         
         // canvas_to_GLtexture(canvas, quadMesh.texture);
         // renderQuad(quadMesh);
@@ -663,444 +620,6 @@ GLuint compile_shader(const char* src, GLenum type) {
     return sh;
 }
 
-// mat module
-
-#include <stdbool.h>
-#include <math.h>
-
-typedef struct {
-    float m00, m01, m02, m03,
-          m10, m11, m12, m13,
-          m20, m21, m22, m23,
-          m30, m31, m32, m33;
-} Mat4_st;
-
-MATDEF Mat4 mat_inv(Mat4 m) {
-    float inv[16];
-    float det;
-    float tmp[16] = {
-        m.m00, m.m01, m.m02, m.m03,
-        m.m10, m.m11, m.m12, m.m13,
-        m.m20, m.m21, m.m22, m.m23,
-        m.m30, m.m31, m.m32, m.m33
-    };
-
-    inv[0] =   tmp[5]  * tmp[10] * tmp[15] - 
-               tmp[5]  * tmp[11] * tmp[14] - 
-               tmp[9]  * tmp[6]  * tmp[15] + 
-               tmp[9]  * tmp[7]  * tmp[14] +
-               tmp[13] * tmp[6]  * tmp[11] - 
-               tmp[13] * tmp[7]  * tmp[10];
-
-    inv[4] =  -tmp[4]  * tmp[10] * tmp[15] + 
-               tmp[4]  * tmp[11] * tmp[14] + 
-               tmp[8]  * tmp[6]  * tmp[15] - 
-               tmp[8]  * tmp[7]  * tmp[14] - 
-               tmp[12] * tmp[6]  * tmp[11] + 
-               tmp[12] * tmp[7]  * tmp[10];
-
-    inv[8] =   tmp[4]  * tmp[9]  * tmp[15] - 
-               tmp[4]  * tmp[11] * tmp[13] - 
-               tmp[8]  * tmp[5]  * tmp[15] + 
-               tmp[8]  * tmp[7]  * tmp[13] + 
-               tmp[12] * tmp[5]  * tmp[11] - 
-               tmp[12] * tmp[7]  * tmp[9];
-
-    inv[12] = -tmp[4]  * tmp[9]  * tmp[14] + 
-               tmp[4]  * tmp[10] * tmp[13] +
-               tmp[8]  * tmp[5]  * tmp[14] - 
-               tmp[8]  * tmp[6]  * tmp[13] - 
-               tmp[12] * tmp[5]  * tmp[10] + 
-               tmp[12] * tmp[6]  * tmp[9];
-
-    inv[1] =  -tmp[1]  * tmp[10] * tmp[15] + 
-               tmp[1]  * tmp[11] * tmp[14] + 
-               tmp[9]  * tmp[2]  * tmp[15] - 
-               tmp[9]  * tmp[3]  * tmp[14] - 
-               tmp[13] * tmp[2]  * tmp[11] + 
-               tmp[13] * tmp[3]  * tmp[10];
-
-    inv[5] =   tmp[0]  * tmp[10] * tmp[15] - 
-               tmp[0]  * tmp[11] * tmp[14] - 
-               tmp[8]  * tmp[2]  * tmp[15] + 
-               tmp[8]  * tmp[3]  * tmp[14] + 
-               tmp[12] * tmp[2]  * tmp[11] - 
-               tmp[12] * tmp[3]  * tmp[10];
-
-    inv[9] =  -tmp[0]  * tmp[9]  * tmp[15] + 
-               tmp[0]  * tmp[11] * tmp[13] + 
-               tmp[8]  * tmp[1]  * tmp[15] - 
-               tmp[8]  * tmp[3]  * tmp[13] - 
-               tmp[12] * tmp[1]  * tmp[11] + 
-               tmp[12] * tmp[3]  * tmp[9];
-
-    inv[13] =  tmp[0]  * tmp[9]  * tmp[14] - 
-               tmp[0]  * tmp[10] * tmp[13] - 
-               tmp[8]  * tmp[1]  * tmp[14] + 
-               tmp[8]  * tmp[2]  * tmp[13] + 
-               tmp[12] * tmp[1]  * tmp[10] - 
-               tmp[12] * tmp[2]  * tmp[9];
-
-    inv[2] =   tmp[1]  * tmp[6]  * tmp[15] - 
-               tmp[1]  * tmp[7]  * tmp[14] - 
-               tmp[5]  * tmp[2]  * tmp[15] + 
-               tmp[5]  * tmp[3]  * tmp[14] + 
-               tmp[13] * tmp[2]  * tmp[7]  - 
-               tmp[13] * tmp[3]  * tmp[6];
-
-    inv[6] =  -tmp[0]  * tmp[6]  * tmp[15] + 
-               tmp[0]  * tmp[7]  * tmp[14] + 
-               tmp[4]  * tmp[2]  * tmp[15] - 
-               tmp[4]  * tmp[3]  * tmp[14] - 
-               tmp[12] * tmp[2]  * tmp[7]  + 
-               tmp[12] * tmp[3]  * tmp[6];
-
-    inv[10] =  tmp[0]  * tmp[5]  * tmp[15] - 
-               tmp[0]  * tmp[7]  * tmp[13] - 
-               tmp[4]  * tmp[1]  * tmp[15] + 
-               tmp[4]  * tmp[3]  * tmp[13] + 
-               tmp[12] * tmp[1]  * tmp[7]  - 
-               tmp[12] * tmp[3]  * tmp[5];
-
-    inv[14] = -tmp[0]  * tmp[5]  * tmp[14] + 
-               tmp[0]  * tmp[6]  * tmp[13] + 
-               tmp[4]  * tmp[1]  * tmp[14] - 
-               tmp[4]  * tmp[2]  * tmp[13] - 
-               tmp[12] * tmp[1]  * tmp[6]  + 
-               tmp[12] * tmp[2]  * tmp[5];
-
-    inv[3] =  -tmp[1]  * tmp[6]  * tmp[11] + 
-               tmp[1]  * tmp[7]  * tmp[10] + 
-               tmp[5]  * tmp[2]  * tmp[11] - 
-               tmp[5]  * tmp[3]  * tmp[10] - 
-               tmp[9]  * tmp[2]  * tmp[7]  + 
-               tmp[9]  * tmp[3]  * tmp[6];
-
-    inv[7] =   tmp[0]  * tmp[6]  * tmp[11] - 
-               tmp[0]  * tmp[7]  * tmp[10] - 
-               tmp[4]  * tmp[2]  * tmp[11] + 
-               tmp[4]  * tmp[3]  * tmp[10] + 
-               tmp[8]  * tmp[2]  * tmp[7]  - 
-               tmp[8]  * tmp[3]  * tmp[6];
-
-    inv[11] = -tmp[0]  * tmp[5]  * tmp[11] + 
-               tmp[0]  * tmp[7]  * tmp[9]  + 
-               tmp[4]  * tmp[1]  * tmp[11] - 
-               tmp[4]  * tmp[3]  * tmp[9]  - 
-               tmp[8]  * tmp[1]  * tmp[7]  + 
-               tmp[8]  * tmp[3]  * tmp[5];
-
-    inv[15] =  tmp[0]  * tmp[5]  * tmp[10] - 
-               tmp[0]  * tmp[6]  * tmp[9]  - 
-               tmp[4]  * tmp[1]  * tmp[10] + 
-               tmp[4]  * tmp[2]  * tmp[9]  + 
-               tmp[8]  * tmp[1]  * tmp[6]  - 
-               tmp[8]  * tmp[2]  * tmp[5];
-
-    det = tmp[0] * inv[0] + tmp[1] * inv[4] + tmp[2] * inv[8] + tmp[3] * inv[12];
-
-    if (fabsf(det) < 1e-6f) {
-        return (Mat4) {0.0f};
-    }
-
-    det = 1.0f / det;
-
-    m.m00 = inv[0]  * det;  m.m01 = inv[1]  * det;  m.m02 = inv[2]  * det;  m.m03 = inv[3]  * det;
-    m.m10 = inv[4]  * det;  m.m11 = inv[5]  * det;  m.m12 = inv[6]  * det;  m.m13 = inv[7]  * det;
-    m.m20 = inv[8]  * det;  m.m21 = inv[9]  * det;  m.m22 = inv[10] * det;  m.m23 = inv[11] * det;
-    m.m30 = inv[12] * det;  m.m31 = inv[13] * det;  m.m32 = inv[14] * det;  m.m33 = inv[15] * det;
-
-    return m;
-}
-
-MATDEF Mat4 mat_mul(Mat4 m1, Mat4 m2) {
-    Mat4 result = {0.0f};
-    result.m00 = m1.m00 * m2.m00 + m1.m01 * m2.m10 + m1.m02 * m2.m20 + m1.m03 * m2.m30;
-    result.m01 = m1.m00 * m2.m01 + m1.m01 * m2.m11 + m1.m02 * m2.m21 + m1.m03 * m2.m31;
-    result.m02 = m1.m00 * m2.m02 + m1.m01 * m2.m12 + m1.m02 * m2.m22 + m1.m03 * m2.m32;
-    result.m03 = m1.m00 * m2.m03 + m1.m01 * m2.m13 + m1.m02 * m2.m23 + m1.m03 * m2.m33;
-
-    result.m10 = m1.m10 * m2.m00 + m1.m11 * m2.m10 + m1.m12 * m2.m20 + m1.m13 * m2.m30;
-    result.m11 = m1.m10 * m2.m01 + m1.m11 * m2.m11 + m1.m12 * m2.m21 + m1.m13 * m2.m31;
-    result.m12 = m1.m10 * m2.m02 + m1.m11 * m2.m12 + m1.m12 * m2.m22 + m1.m13 * m2.m32;
-    result.m13 = m1.m10 * m2.m03 + m1.m11 * m2.m13 + m1.m12 * m2.m23 + m1.m13 * m2.m33;
-
-    result.m20 = m1.m20 * m2.m00 + m1.m21 * m2.m10 + m1.m22 * m2.m20 + m1.m23 * m2.m30;
-    result.m21 = m1.m20 * m2.m01 + m1.m21 * m2.m11 + m1.m22 * m2.m21 + m1.m23 * m2.m31;
-    result.m22 = m1.m20 * m2.m02 + m1.m21 * m2.m12 + m1.m22 * m2.m22 + m1.m23 * m2.m32;
-    result.m23 = m1.m20 * m2.m03 + m1.m21 * m2.m13 + m1.m22 * m2.m23 + m1.m23 * m2.m33;
-    
-    result.m30 = m1.m30 * m2.m00 + m1.m31 * m2.m10 + m1.m32 * m2.m20 + m1.m33 * m2.m30;
-    result.m31 = m1.m30 * m2.m01 + m1.m31 * m2.m11 + m1.m32 * m2.m21 + m1.m33 * m2.m31;
-    result.m32 = m1.m30 * m2.m02 + m1.m31 * m2.m12 + m1.m32 * m2.m22 + m1.m33 * m2.m32;
-    result.m33 = m1.m30 * m2.m03 + m1.m31 * m2.m13 + m1.m32 * m2.m23 + m1.m33 * m2.m33;
-
-    return result;
-}
-
-MATDEF Mat4 mat4_identity() {
-    Mat4 result = {0.0f};
-    result.m00 = 1.0f;
-    result.m11 = 1.0f;
-    result.m22 = 1.0f;
-    result.m33 = 1.0f;
-    return result;
-}
-
-MATDEF Mat4 mat_translate(float x, float y, float z) {
-    Mat4 result = mat4_identity();
-    
-    result.m03 = x;
-    result.m13 = y;
-    result.m23 = z;
-    return result;
-}
-
-MATDEF Mat4 mat_scale(float x, float y, float z) {
-    Mat4 result = mat4_identity();
-    result.m00 = x;
-    result.m11 = y;
-    result.m22 = z;
-    return result;
-}
-
-MATDEF Mat4 mat_rotate_x(float angle) {
-    Mat4 result = mat4_identity();
-    float c = cosf(angle);
-    float s = sinf(angle);
-
-    result.m11 = c;
-    result.m12 = -s;
-    result.m21 = s;
-    result.m22 = c;
-    return result;
-}
-
-MATDEF Mat4 mat_rotate_y(float angle) {
-    Mat4 result = mat4_identity();
-    float c = cosf(angle);
-    float s = sinf(angle);
-
-    result.m00 = c;
-    result.m02 = s;
-    result.m20 = -s;
-    result.m22 = c;
-
-    return result;
-}
-
-MATDEF Mat4 mat_rotate_z(float angle) {
-    Mat4 result = mat4_identity();
-    float c = cosf(angle);
-    float s = sinf(angle);
-
-    result.m00 = c;
-    result.m01 = -s;
-    result.m10 = s;
-    result.m11 = c;
-
-    return result;
-}
-
-MATDEF vec3 mat_transform(vec3 v, Mat4 m, float v_w) {
-    // assumes w = 1
-    return (vec3) {
-        .x = m.m00 * v.x + m.m01 * v.y + m.m02 * v.z + m.m03 * v_w,
-        .y = m.m10 * v.x + m.m11 * v.y + m.m12 * v.z + m.m13 * v_w,
-        .z = m.m20 * v.x + m.m21 * v.y + m.m22 * v.z + m.m23 * v_w,
-    };
-}
-
-vec3 vec3_add(vec3 a, vec3 b) {
-    return (vec3) {
-        .x = a.x + b.x,
-        .y = a.y + b.y,
-        .z = a.z + b.z,
-    };
-}
-
-vec3 vec3_sub(vec3 a, vec3 b) {
-    return (vec3) {
-        .x = a.x - b.x,
-        .y = a.y - b.y,
-        .z = a.z - b.z,
-    };
-}
-
-vec3 vec3_norm(vec3 v) {
-    float len = v.x*v.x + v.y*v.y + v.z*v.z;
-    if (fabsf(len) < EPS) return (vec3) {0.0f};
-    
-    len = sqrtf(len);
-
-    return (vec3) {
-        .x = v.x / len,
-        .y = v.y / len,
-        .z = v.z / len,
-    };
-}
-
-vec3 vec3_cross(vec3 side1, vec3 side2) {
-    return (vec3) {
-        .x = side1.y * side2.z - side1.z * side2.y,
-        .y = side1.z * side2.x - side1.x * side2.z,
-        .z = side1.x * side2.y - side1.y * side2.x
-    };
-}
-
-
-Quaternion quat_add(Quaternion a, Quaternion b) {
-    Quaternion q = { a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w };
-    return q;
-}
-
-Quaternion quat_sub(Quaternion a, Quaternion b) {
-    Quaternion q = { a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w };
-    return q;
-}
-
-Quaternion quat_mul(Quaternion a, Quaternion b) {
-    Quaternion q;
-    q.w = a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z;
-    q.x = a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y;
-    q.y = a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x;
-    q.z = a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w;
-    return q;
-}
-
-Quaternion quat_normalize(Quaternion q) {
-    float len = sqrtf(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w);
-    if (len == 0.0f) return (Quaternion){0,0,0,1};
-    float inv = 1.0f / len;
-    return (Quaternion){ q.x*inv, q.y*inv, q.z*inv, q.w*inv };
-}
-
-Quaternion quat_from_axis_angle(vec3 axis, float angle) {
-    float half = angle * 0.5f;
-    float s = sinf(half);
-    Quaternion q = { axis.x * s, axis.y * s, axis.z * s, cosf(half) };
-    return quat_normalize(q);
-}
-
-Quaternion quat_rotate(vec3 direction, float angle) {
-    return quat_from_axis_angle(direction, angle);
-}
-
-Mat4 quat_to_mat4(Quaternion q) {
-    q = quat_normalize(q);
-
-    float xx = q.x * q.x;
-    float yy = q.y * q.y;
-    float zz = q.z * q.z;
-    float xy = q.x * q.y;
-    float xz = q.x * q.z;
-    float yz = q.y * q.z;
-    float wx = q.w * q.x;
-    float wy = q.w * q.y;
-    float wz = q.w * q.z;
-
-    Mat4 m;
-    m.m00 = 1.0f - 2.0f * (yy + zz);
-    m.m01 = 2.0f * (xy - wz);
-    m.m02 = 2.0f * (xz + wy);
-    m.m03 = 0.0f;
-
-    m.m10 = 2.0f * (xy + wz);
-    m.m11 = 1.0f - 2.0f * (xx + zz);
-    m.m12 = 2.0f * (yz - wx);
-    m.m13 = 0.0f;
-
-    m.m20 = 2.0f * (xz - wy);
-    m.m21 = 2.0f * (yz + wx);
-    m.m22 = 1.0f - 2.0f * (xx + yy);
-    m.m23 = 0.0f;
-
-    m.m30 = 0.0f;
-    m.m31 = 0.0f;
-    m.m32 = 0.0f;
-    m.m33 = 1.0f;
-
-    return m;
-}
-
-Quaternion quat_inverse(Quaternion q) {
-    float norm_sq = q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w;
-    if (norm_sq == 0.0f) {
-        return (Quaternion) {.0f, .0f, .0f, 1.f}; // return identity if invalid
-    }
-
-    float inv = 1.0f / norm_sq;
-    return (Quaternion){
-        -q.x * inv,
-        -q.y * inv,
-        -q.z * inv,
-         q.w * inv
-    };
-}
-
-File_t read_file(const char* filepath) {
-    char* err_msg = NULL;
-    FILE* fh      = fopen(filepath, "rb");
-
-    if (!fh) goto error;
-
-    size_t file_size = 0;
-    if (fseek(fh, 0, SEEK_END)) goto error;
-
-    file_size = ftell(fh);
-    if (fseek(fh, 0, SEEK_SET)) goto error;
-     
-    char* data = (char*) malloc(file_size + 1);
-    if (!data) {
-        err_msg = "Couldn't allocate bytes to read file in RAM.";
-        goto error;
-    }
-
-    if (fread(data, 1, file_size, fh) != file_size)
-        goto error;
-
-    data[file_size] = '\0';
-    fclose(fh);
-
-    return (File_t) {
-        .data      = data,
-        .size      = file_size + 1,
-        .file_path = filepath
-    };
-
-error:
-    char* error = strerror(errno);
-    if (err_msg) error = err_msg;
-
-    printf("read_file() Failed: %s\n", err_msg);
-
-    if (fh) { fclose(fh); }
-    return (File_t){ .data = NULL, .size = 0, .file_path = filepath };
-}
-
-GLuint createShaderProgramGL_(File_t vs_file, File_t fs_file) {
-    GLuint vs = compile_shader(vs_file.data, GL_VERTEX_SHADER);
-    GLuint fs = compile_shader(fs_file.data, GL_FRAGMENT_SHADER);
-    GLuint quadProg = glCreateProgram();
-    glAttachShader(quadProg, vs);
-    glAttachShader(quadProg, fs);
-    glLinkProgram(quadProg);
-    return quadProg;
-}
-
-GLProgram_t createShaderProgramGL(File_t vs_file, File_t fs_file) {
-    GLuint programID = createShaderProgramGL_(vs_file, fs_file);
-    GLProgram_t program = {0};
-
-    if (!programID) return program;
-
-    program.program       = programID;
-    program.world_mat_loc = glGetUniformLocation(programID, UNIFORM_WORLD_MATRIX);
-    program.view_mat_loc  = glGetUniformLocation(programID, UNIFORM_VIEW_MATRIX);
-    program.proj_mat_loc  = glGetUniformLocation(programID, UNIFORM_PROJ_MATRIX);
-    return program;
-}
-
 QuadMesh createQuadMesh(size_t texture_width, size_t texture_height, GLuint program) {
     float quad_vertices[] = {
         -1.0f, -1.0f, 0.0f, 0.0f,
@@ -1173,10 +692,56 @@ void renderQuad(QuadMesh mesh) {
     glBindVertexArray(0);
 }
 
-void canvas_to_GLtexture(Olivec_Canvas src, GLint dest) {
-    glBindTexture(GL_TEXTURE_2D, dest);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, src.width, src.height, 0, GL_BGRA_EXT, GL_UNSIGNED_BYTE, src.pixels);
-    glBindTexture(GL_TEXTURE_2D, dest);    
+bool meshSetupGLBuffers_Raylib(Mesh_t* mesh, float* vertices, float* normals, float* texcoords, float vertex_count) {
+    if (!mesh) return false;
+    GLuint vao, vertex_obj, normal_obj, texcoord_obj;
+
+    glGenBuffers(1, &vertex_obj);
+    glGenBuffers(1, &normal_obj);
+    glGenBuffers(1, &texcoord_obj);
+    glGenVertexArrays(1, &vao);
+    if (!vao || !vertex_obj || !normal_obj || !texcoord_obj) 
+        return false;
+
+    size_t vertex_vbo_size     = vertex_count * 3 * sizeof(float);
+    size_t normals_vbo_size    = vertex_count * 3 * sizeof(float);
+    size_t texcoords_vbo_size  = vertex_count * 2 * sizeof(float);
+
+    // positions
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_obj);
+    glBufferData(GL_ARRAY_BUFFER, vertex_vbo_size, vertices, GL_STATIC_DRAW);
+
+    // normals
+    glBindBuffer(GL_ARRAY_BUFFER, normal_obj);
+    glBufferData(GL_ARRAY_BUFFER, normals_vbo_size, normals, GL_STATIC_DRAW);
+
+    // uvs
+    glBindBuffer(GL_ARRAY_BUFFER, texcoord_obj);
+    glBufferData(GL_ARRAY_BUFFER, texcoords_vbo_size, texcoords, GL_STATIC_DRAW);
+
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_obj);
+    glVertexAttribPointer(ATTRIB_POSITION_LOCATION, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*) 0);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, normal_obj);
+    glVertexAttribPointer(ATTRIB_NORMAL_LOCATION, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*) 0);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, texcoord_obj);
+    glVertexAttribPointer(ATTRIB_UV_LOCATION, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*) 0);
+
+    glEnableVertexAttribArray(ATTRIB_POSITION_LOCATION);
+    glEnableVertexAttribArray(ATTRIB_NORMAL_LOCATION);
+    glEnableVertexAttribArray(ATTRIB_UV_LOCATION);
+    glEnableVertexAttribArray(ATTRIB_COLOR_LOCATION);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
+    mesh->ebo          = 0;
+    mesh->index_count  = 0;
+    mesh->vao          = vao;
+    mesh->vertex_count = vertex_count;
+    return true;
 }
 
 bool meshSetupGLBuffers(Mesh_t * mesh, float* vbo_buffer, size_t buff_size) {
@@ -1210,7 +775,74 @@ bool meshSetupGLBuffers(Mesh_t * mesh, float* vbo_buffer, size_t buff_size) {
 
     mesh->index_count  = 0;
     mesh->vertex_count = (buff_size / sizeof(float)) / VERTEX_STRIDE;
+    glBindVertexArray(0);
+
     return true;
+}
+
+Mesh_t createSphereMesh(float radius, int rings, int slices, Color color, GLProgram_t program)  {
+    Mesh_t mesh = { 0 };
+
+    if ((rings >= 3) && (slices >= 3))
+    {
+        par_shapes_set_epsilon_degenerate_sphere(0.0);
+        par_shapes_mesh *sphere = par_shapes_create_parametric_sphere(slices, rings);
+        par_shapes_scale(sphere, radius, radius, radius);
+        // NOTE: Soft normals are computed internally
+
+        float* vertices   = (float *)malloc(sphere->ntriangles*3*3*sizeof(float));
+        float* normals    = (float *)malloc(sphere->ntriangles*3*3*sizeof(float));
+        float* texcoords  = (float *)malloc(sphere->ntriangles*3*2*sizeof(float));
+
+        int vertexCount   = sphere->ntriangles*3;
+        int triangleCount = sphere->ntriangles;
+
+        for (int k = 0; k < vertexCount; k++)
+        {
+            vertices[k*3 + 0]  = sphere->points[sphere->triangles[k]*3];
+            vertices[k*3 + 1]  = sphere->points[sphere->triangles[k]*3 + 1];
+            vertices[k*3 + 2]  = sphere->points[sphere->triangles[k]*3 + 2];
+
+            normals[k*3]       = sphere->normals[sphere->triangles[k]*3];
+            normals[k*3 + 1]   = sphere->normals[sphere->triangles[k]*3 + 1];
+            normals[k*3 + 2]   = sphere->normals[sphere->triangles[k]*3 + 2];
+
+            texcoords[k*2]     = sphere->tcoords[sphere->triangles[k]*2];
+            texcoords[k*2 + 1] = sphere->tcoords[sphere->triangles[k]*2 + 1];
+        }
+
+        par_shapes_free_mesh(sphere);
+
+        // Upload vertex data to GPU (static mesh)
+        // UploadMesh(&mesh, false);
+
+        mesh.transform = (Transform) {
+            .rot_mode = DEFAULT_ROTMODE,
+            .position = {.0f},
+            .rotation = {.0f},
+            .scale    = {1.0f, 1.0f, 1.0f}
+        };
+
+        if (program.program) {
+            mesh.program = program;
+        }
+
+        if (!meshSetupGLBuffers_Raylib(&mesh, vertices, normals, texcoords, sphere->ntriangles*3))
+            return (Mesh_t) {0};
+
+        mesh.no_color_attrib = true;
+        meshInit(&mesh);
+
+        mesh.color = color;
+        
+
+        free(vertices);
+        free(normals);
+        free(texcoords);
+    }
+    else {};
+
+    return mesh;
 }
 
 Mesh_t createCubeMesh(float width, float height, float depth, Color color, GLProgram_t prog) {
@@ -1292,12 +924,25 @@ Mesh_t createCubeMesh(float width, float height, float depth, Color color, GLPro
     if (!meshSetupGLBuffers(&mesh, vbo_buffer, sizeof(vbo_buffer))) 
         return (Mesh_t) {0};
 
+    meshInit(&mesh);
+
     return mesh;
 
 #   undef NORMAL_
 #   undef UV_
 #   undef COLOR_
 }
+
+void meshInit(Mesh_t* mesh) {
+    if (!mesh) return;
+
+    if (mesh->program.program) {
+        for (int i = 0; i < TEXTURE_COUNT; ++i) {
+            mesh->textures[i]             = (Texture_t) {0};
+            mesh->uniform_texture_locs[i] = glGetUniformLocation(mesh->program.program, UNIFORM_TEXTURE_NAMES[i]);
+        }
+    }
+} 
 
 Mesh_t createTriangleMesh(vec3 v1, vec3 v2, vec3 v3, Color color, GLProgram_t prog) {
     Mesh_t mesh;
@@ -1331,6 +976,9 @@ Mesh_t createTriangleMesh(vec3 v1, vec3 v2, vec3 v3, Color color, GLProgram_t pr
     if (!meshSetupGLBuffers(&mesh, vbo_buffer, sizeof(vbo_buffer))) 
         return (Mesh_t) {0};
     
+
+    meshInit(&mesh);
+
     return mesh;
 
 #   undef NORMAL_
@@ -1364,12 +1012,34 @@ void renderMesh(Mesh_t m, Camera_t* camera) {
     glUniformMatrix4fv(m.program.view_mat_loc,  1, GL_TRUE, (float*)(&camera->view_matrix));
     glUniformMatrix4fv(m.program.proj_mat_loc,  1, GL_TRUE, (float*)(&camera->proj_matrix));
     glUniformMatrix4fv(m.program.world_mat_loc, 1, GL_TRUE, (float*)(&m.localToWorld));
+    glUniform3f(cameraPosLoc, camera->position.x, camera->position.y, camera->position.z);
+
+    for (int i = 0; i < TEXTURE_COUNT; ++i) {
+        if (!m.textures[i].texture_id) continue;
+
+        GLuint tId = m.textures[i].texture_id;
+
+        glActiveTexture(GL_TEXTURE0 + i);
+        glBindTexture(GL_TEXTURE_2D, tId);
+        glUniform1i(m.uniform_texture_locs[i], i);
+    }
+
+    glUniform1i(m.program.no_color_attrib_loc, m.no_color_attrib);
+    glUniform3f(m.program.color_loc, m.color.r, m.color.g, m.color.b);
     
     if (m.ebo) {
         glDrawElements(GL_TRIANGLES, m.index_count, GL_UNSIGNED_SHORT, 0);
     } else {
         glDrawArrays(GL_TRIANGLES, 0, m.vertex_count);
     }
+
+    // clean up:
+
+    for (int i = 0; i < TEXTURE_COUNT; ++i) {
+        glActiveTexture(GL_TEXTURE0 + i);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
     glBindVertexArray(0);
     glUseProgram(0);
 }
@@ -1403,7 +1073,6 @@ void update_camera(Camera_t * camera) {
     vec3 forwardDelta = screen_to_camera(camera, mouseState.deltaX + CANVAS_WIDTH / 2, mouseState.deltaY + CANVAS_HEIGHT / 2);
     forwardDelta.x = forwardDelta.x * MOUSE_SENSITIVITY;
     forwardDelta.y = forwardDelta.y * MOUSE_SENSITIVITY;
-
 
     camera->forward.x += forwardDelta.x;
     camera->forward.y += forwardDelta.y;
@@ -1477,7 +1146,6 @@ void update_camera(Camera_t * camera) {
         }
 
         camera->target = vec3_add(camera->position, forward);
-
     }
 }
 
@@ -1546,4 +1214,38 @@ void camera_compute_projmatrix(Camera_t* camera) {
 void print_mouse_state()
 {
     printf("mouse X: %d, Y: %d, dX: %d, dY: %d\n", mouseState.x, mouseState.y, mouseState.deltaX, mouseState.deltaY);
+}
+
+Texture_t loadTextureFromFile(const char * filePath) {
+    Texture_t texture;
+    texture.texture_id = 0;
+
+    int width, height, channels;
+    unsigned char *data = stbi_load(filePath, &width, &height, &channels, 0);
+    if (!data) {
+        fprintf(stderr, "Failed to load texture: %s\n", filePath);
+        return texture;
+    }
+
+    glGenTextures(1, &texture.texture_id);
+    glBindTexture(GL_TEXTURE_2D, texture.texture_id);
+
+    GLenum format = GL_RGB;
+    if (channels == 1) format = GL_RED;
+    else if (channels == 3) format = GL_RGB;
+    else if (channels == 4) format = GL_RGBA;
+
+    glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format,
+                 GL_UNSIGNED_BYTE, data);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    // Texture parameters
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    stbi_image_free(data);
+
+    return texture;
 }
