@@ -17,6 +17,7 @@
         "flag_getter.h": "c",
         "*.rh": "c",
         "engine_math.h": "c",
-        "gl_gfx.h": "c"
+        "gl_gfx.h": "c",
+        "stdio.h": "c"
     }
 }

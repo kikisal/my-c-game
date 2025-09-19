@@ -8,15 +8,33 @@
 #define ATTRIB_NORMAL_LOCATION      1
 #define ATTRIB_UV_LOCATION          2
 #define ATTRIB_COLOR_LOCATION       3
+#define ATTRIB_TANGENT_LOCATION     4
 
-#define UNIFORM_WORLD_MATRIX   "world_mat"
-#define UNIFORM_VIEW_MATRIX    "view_mat"
-#define UNIFORM_PROJ_MATRIX    "proj_mat"
-#define UNIFORM_LIGHT_COUNT    "light_count"
-#define UNIFORM_NOCOLOR_ATTRIB "no_color_attrib"
-#define UNIFORM_COLOR_LOC      "color"
+#define UNIFORM_WORLD_MATRIX           "world_mat"
+#define UNIFORM_VIEW_MATRIX            "view_mat"
+#define UNIFORM_PROJ_MATRIX            "proj_mat"
+#define UNIFORM_LIGHT_COUNT            "light_count"
+#define UNIFORM_NOCOLOR_ATTRIB         "no_color_attrib"
+#define UNIFORM_HAS_TANGENT_ATTRIB_LOC "hasTangentAttrib"
+#define UNIFORM_COLOR_LOC              "color"
 
 typedef struct GLProgram_st GLProgram_t;
+
+
+enum {
+    TEXTURE_ALBEDO_MAP,
+    TEXTURE_NORMAL_MAP,
+    TEXTURE_ROUGHNESS,
+    TEXTURE_SPECULAR_MAP,
+    TEXTURE_COUNT
+};
+
+const char* UNIFORM_TEXTURE_NAMES[TEXTURE_COUNT] = {
+    "albedo_texture",
+    "normal_map_texture",
+    "roughness_texture",
+    "specular_map_texture",
+};
 
 struct GLProgram_st {
     GLuint program;
@@ -28,22 +46,10 @@ struct GLProgram_st {
     GLint light_count_loc;
 
     GLint no_color_attrib_loc;
+    GLint has_tangent_attrib_loc;
     GLint color_loc;
-};
 
-enum {
-    TEXTURE_ALBEDO_TEXTURE,
-    TEXTURE_NORMAL_MAP_TEXTURE,
-    TEXTURE_ROUGHNESS_TEXTURE,
-    TEXTURE_SPECULAR_MAP,
-    TEXTURE_COUNT
-};
-
-const char* UNIFORM_TEXTURE_NAMES[TEXTURE_COUNT] = {
-    "albedo_texture",
-    "normal_map_texture",
-    "roughness_texture",
-    "specular_map_texture",
+    GLint uniform_texture_locs[TEXTURE_COUNT];
 };
 
 struct Texture_st {
@@ -77,13 +83,22 @@ GLProgram_t createShaderProgramGL(File_t vs_file, File_t fs_file) {
     program.program         = programID;
 
     // load uniforms
-    program.world_mat_loc       = glGetUniformLocation(programID, UNIFORM_WORLD_MATRIX);
-    program.view_mat_loc        = glGetUniformLocation(programID, UNIFORM_VIEW_MATRIX);
-    program.proj_mat_loc        = glGetUniformLocation(programID, UNIFORM_PROJ_MATRIX);
-    program.light_count_loc     = glGetUniformLocation(programID, UNIFORM_LIGHT_COUNT);
-    program.no_color_attrib_loc = glGetUniformLocation(programID, UNIFORM_NOCOLOR_ATTRIB);
-    program.color_loc           = glGetUniformLocation(programID, UNIFORM_COLOR_LOC);
-    
+    program.world_mat_loc          = glGetUniformLocation(programID, UNIFORM_WORLD_MATRIX);
+    program.view_mat_loc           = glGetUniformLocation(programID, UNIFORM_VIEW_MATRIX);
+    program.proj_mat_loc           = glGetUniformLocation(programID, UNIFORM_PROJ_MATRIX);
+    program.light_count_loc        = glGetUniformLocation(programID, UNIFORM_LIGHT_COUNT);
+    program.no_color_attrib_loc    = glGetUniformLocation(programID, UNIFORM_NOCOLOR_ATTRIB);
+    program.color_loc              = glGetUniformLocation(programID, UNIFORM_COLOR_LOC);
+    program.has_tangent_attrib_loc = glGetUniformLocation(programID, UNIFORM_HAS_TANGENT_ATTRIB_LOC);
+    glUseProgram(programID);
+    for (int i = 0; i < TEXTURE_COUNT; ++i) {
+        program.uniform_texture_locs[i] = glGetUniformLocation(program.program, UNIFORM_TEXTURE_NAMES[i]);
+        if (program.uniform_texture_locs[i] != -1) {
+            glUniform1i(program.uniform_texture_locs[i], i);
+        }
+    }
+    glUseProgram(0);
+
     return program;
 }
 

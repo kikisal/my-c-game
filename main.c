@@ -122,14 +122,15 @@ struct Mesh_st {
     GLProgram_t program;
     GLuint      vao;
     GLuint      vbo;
+    GLuint      tangent_vbo;
     GLuint      ebo;
     size_t      index_count;
     size_t      vertex_count;
     Transform   transform;
     Mat4        localToWorld;
     Texture_t   textures[TEXTURE_COUNT];
-    GLint       uniform_texture_locs[TEXTURE_COUNT];
-    bool        no_color_attrib;
+    bool        noColorAttrib;
+    bool        hasTangentAttrib;
     Color       color;
 };
 
@@ -250,7 +251,7 @@ int main() {
     sphere    = createSphereMesh(1.0f, 8, 8, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
     cube      = createCubeMesh(1.0f, 1.0f, 1.0f, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
     floorMesh = createCubeMesh(10.0f, 0.1f, 10.0f, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
-    floorMesh.no_color_attrib   = true;
+    floorMesh.noColorAttrib     = true;
     floorMesh.color             = (Color) {1.0f, 1.0f, 1.0f};
 
     sphere.transform.position.x = -2.0f;
@@ -271,8 +272,16 @@ int main() {
 
     Texture_t diffuseMap                  = loadTextureFromFile("./resources/container.png");
     Texture_t specularMap                 = loadTextureFromFile("./resources/SpecularMap2.png");
-    cube.textures[TEXTURE_ALBEDO_TEXTURE] = diffuseMap;
-    cube.textures[TEXTURE_SPECULAR_MAP]   = specularMap;
+
+    // Texture_t brickDiffuseMap             = loadTextureFromFile("./resources/wall2/wall-4-granite-DIFFUSE.jpg");
+    // Texture_t brickNormalMap              = loadTextureFromFile("./resources/wall2/wall-4-granite-NORMAL.jpg");
+    // Texture_t brickSpecularMap            = loadTextureFromFile("./resources/wall2/wall-4-granite-SPECULAR.jpg");
+
+    Texture_t brickDiffuseMap             = loadTextureFromFile("./resources/brick_diffuse_map.jpg");
+    Texture_t brickNormalMap              = loadTextureFromFile("./resources/brick_normal_map.jpg");
+
+    cube.textures[TEXTURE_ALBEDO_MAP]     = brickDiffuseMap;
+    cube.textures[TEXTURE_NORMAL_MAP]     = brickNormalMap;
 
     light1->pos.z = -1.0f;
     light1->pos.y = 1.0f;
@@ -881,7 +890,7 @@ Mesh_t createSphereMesh(float radius, int rings, int slices, Color color, GLProg
         if (!meshSetupGLBuffers_Raylib(&mesh, vertices, normals, texcoords, sphere->ntriangles*3))
             return (Mesh_t) {0};
 
-        mesh.no_color_attrib = true;
+        mesh.noColorAttrib = true;
         meshInit(&mesh);
 
         mesh.color = color;
@@ -904,9 +913,9 @@ Mesh_t createCubeMesh(float width, float height, float depth, Color color, GLPro
     float vbo_buffer[] = {
         // BACK FACE
         -0.5f, -0.5f, -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
-        0.5f, -0.5f,  -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 1.0f, 0.0f, COLOR_ color.r, color.g, color.b,
-        0.5f,  0.5f,  -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
-        0.5f,  0.5f,  -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+         0.5f,  -0.5f, -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 1.0f, 0.0f, COLOR_ color.r, color.g, color.b,
+         0.5f,   0.5f, -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
+         0.5f,   0.5f, -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 1.0f, 1.0f, COLOR_ color.r, color.g, color.b,
         -0.5f,  0.5f, -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 0.0f, 1.0f, COLOR_ color.r, color.g, color.b,
         -0.5f, -0.5f, -0.5f, NORMAL_ 0.0f, 0.0f, -1.0f, UV_ 0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
         
@@ -950,6 +959,7 @@ Mesh_t createCubeMesh(float width, float height, float depth, Color color, GLPro
         -0.5f,  0.5f, -0.5f, NORMAL_ 0.0f, 1.0f, 0.0f, UV_ 0.0f, 0.0f, COLOR_ color.r, color.g, color.b,
     };
 
+
     Mesh_t mesh;
     mesh.transform = (Transform) {
         .rot_mode = DEFAULT_ROTMODE,
@@ -958,8 +968,36 @@ Mesh_t createCubeMesh(float width, float height, float depth, Color color, GLPro
         .scale    = {1.0f, 1.0f, 1.0f}
     };
 
-    Mat4 localScale     = mat_scale(width, height, depth);
-    int vertCount       = (sizeof(vbo_buffer) / sizeof(float)) / VERTEX_STRIDE;
+    Mat4 localScale       = mat_scale(width, height, depth);
+    int vertCount         = (sizeof(vbo_buffer) / sizeof(float)) / VERTEX_STRIDE;
+    int tangent_buff_size = 3 * vertCount * sizeof(float);
+    float* tangents       = malloc(tangent_buff_size);
+    int face_count        = 6;
+    int vertex_per_face   = 6;
+
+    for (int i = 0; i < face_count; ++i) {
+        int index = vertex_per_face * VERTEX_STRIDE * i;
+        
+        float x1  = vbo_buffer[index + 0];
+        float y1  = vbo_buffer[index + 1];
+        float z1  = vbo_buffer[index + 2];
+
+        float x2  = vbo_buffer[index + VERTEX_STRIDE + 0];
+        float y2  = vbo_buffer[index + VERTEX_STRIDE + 1];
+        float z2  = vbo_buffer[index + VERTEX_STRIDE + 2];
+
+        vec3 tangent = vec3_norm((vec3) {
+            x2 - x1,
+            y2 - y1,
+            z2 - z1,
+        });
+        
+        for (int j = 0; j < vertex_per_face; ++j) {
+            tangents[i * vertex_per_face * 3 + j * 3 + 0] = tangent.x;
+            tangents[i * vertex_per_face * 3 + j * 3 + 1] = tangent.y;
+            tangents[i * vertex_per_face * 3 + j * 3 + 2] = tangent.z;
+        }
+    }
 
     // apply scale
     for (int i = 0; i < vertCount; ++i) {
@@ -972,9 +1010,25 @@ Mesh_t createCubeMesh(float width, float height, float depth, Color color, GLPro
         mesh.program = prog;
     }
 
+    // TODO: Remove memory leak for tangents and other critical resources.
     if (!meshSetupGLBuffers(&mesh, vbo_buffer, sizeof(vbo_buffer))) 
         return (Mesh_t) {0};
 
+    // upload tangent vectors.
+    glGenBuffers(1, &mesh.tangent_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.tangent_vbo);
+    glBufferData(GL_ARRAY_BUFFER, tangent_buff_size, tangents, GL_STATIC_DRAW);
+    glBindVertexArray(mesh.vao);
+    glVertexAttribPointer(ATTRIB_TANGENT_LOCATION, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(ATTRIB_TANGENT_LOCATION);
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    if (tangents)
+        free(tangents);
+
+    mesh.hasTangentAttrib = true;
+    
     meshInit(&mesh);
 
     return mesh;
@@ -987,12 +1041,12 @@ Mesh_t createCubeMesh(float width, float height, float depth, Color color, GLPro
 void meshInit(Mesh_t* mesh) {
     if (!mesh) return;
 
-    if (mesh->program.program) {
-        for (int i = 0; i < TEXTURE_COUNT; ++i) {
-            mesh->textures[i]             = (Texture_t) {0};
-            mesh->uniform_texture_locs[i] = glGetUniformLocation(mesh->program.program, UNIFORM_TEXTURE_NAMES[i]);
-        }
-    }
+    // if (mesh->program.program) {
+    //     for (int i = 0; i < TEXTURE_COUNT; ++i) {
+    //         mesh->textures[i]             = (Texture_t) {0};
+    //         mesh->uniform_texture_locs[i] = glGetUniformLocation(mesh->program.program, UNIFORM_TEXTURE_NAMES[i]);
+    //     }
+    // }
 } 
 
 Mesh_t createTriangleMesh(vec3 v1, vec3 v2, vec3 v3, Color color, GLProgram_t prog) {
@@ -1072,11 +1126,11 @@ void renderMesh(Mesh_t m, Camera_t* camera) {
 
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(GL_TEXTURE_2D, tId);
-        glUniform1i(m.uniform_texture_locs[i], i);
     }
 
-    glUniform1i(m.program.no_color_attrib_loc, m.no_color_attrib);
+    glUniform1i(m.program.no_color_attrib_loc, m.noColorAttrib);
     glUniform3f(m.program.color_loc, m.color.r, m.color.g, m.color.b);
+    glUniform1i(m.program.has_tangent_attrib_loc, m.hasTangentAttrib);
     
     if (m.ebo) {
         glDrawElements(GL_TRIANGLES, m.index_count, GL_UNSIGNED_SHORT, 0);
@@ -1084,8 +1138,7 @@ void renderMesh(Mesh_t m, Camera_t* camera) {
         glDrawArrays(GL_TRIANGLES, 0, m.vertex_count);
     }
 
-    // clean up:
-
+    // clean up
     for (int i = 0; i < TEXTURE_COUNT; ++i) {
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(GL_TEXTURE_2D, 0);
