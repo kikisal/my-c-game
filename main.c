@@ -123,6 +123,11 @@ struct Mesh_st {
     GLuint      vao;
     GLuint      vbo;
     GLuint      tangent_vbo;
+
+    // memory buffers
+    float*      vertices;
+    float*      tangents;
+
     GLuint      ebo;
     size_t      index_count;
     size_t      vertex_count;
@@ -130,7 +135,8 @@ struct Mesh_st {
     Mat4        localToWorld;
     Texture_t   textures[TEXTURE_COUNT];
     bool        noColorAttrib;
-    bool        hasTangentAttrib;
+    bool        hasTangentAttrib; 
+    bool        showTangentSpace;
     Color       color;
 };
 
@@ -183,7 +189,10 @@ typedef struct MouseState_st MouseState;
 
 void print_mouse_state();
 
-// -- engine constants. --
+// -- engine constants & state. --
+GLuint      g_arrowVBO;
+GLuint      g_arrowVAO;
+GLProgram_t g_arrowProgram;
 
 #define MOUSE_SENSITIVITY 10.0f
 
@@ -223,6 +232,23 @@ int main() {
         return -1;
     }
 
+    glGenBuffers(1, &g_arrowVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, g_arrowVBO);
+    glBufferData(GL_ARRAY_BUFFER, 2 * 3 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+
+    glGenVertexArrays(1, &g_arrowVAO);
+    glBindVertexArray(g_arrowVAO);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*) 0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    File_t arrow_vs_file = read_file("./shaders/arrow.vs");
+    File_t arrow_fs_file = read_file("./shaders/arrow.fs");
+    g_arrowProgram = createShaderProgramGL(arrow_vs_file, arrow_fs_file);
+
+
     File_t quad_vs_file    = read_file("./shaders/quad.vs");
     File_t quad_fs_file    = read_file("./shaders/quad.fs");
     File_t default_vs_file = read_file("./shaders/default.vs");
@@ -250,6 +276,8 @@ int main() {
     QuadMesh quad = createQuadMesh(CANVAS_WIDTH, CANVAS_HEIGHT, quadProg);
     sphere    = createSphereMesh(1.0f, 8, 8, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
     cube      = createCubeMesh(1.0f, 1.0f, 1.0f, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
+    cube.showTangentSpace = true;
+
     floorMesh = createCubeMesh(10.0f, 0.1f, 10.0f, (Color) {1.0f, 1.0f, 1.0f}, defaultProg);
     floorMesh.noColorAttrib     = true;
     floorMesh.color             = (Color) {1.0f, 1.0f, 1.0f};
@@ -960,13 +988,16 @@ Mesh_t createCubeMesh(float width, float height, float depth, Color color, GLPro
     };
 
 
-    Mesh_t mesh;
+    Mesh_t mesh    = { 0 };
     mesh.transform = (Transform) {
-        .rot_mode = DEFAULT_ROTMODE,
-        .position = {.0f},
-        .rotation = {.0f},
-        .scale    = {1.0f, 1.0f, 1.0f}
+        .rot_mode  = DEFAULT_ROTMODE,
+        .position  = {.0f},
+        .rotation  = {.0f},
+        .scale     = {1.0f, 1.0f, 1.0f}
     };
+
+    mesh.vertices = NULL;
+    mesh.tangents = NULL;
 
     Mat4 localScale       = mat_scale(width, height, depth);
     int vertCount         = (sizeof(vbo_buffer) / sizeof(float)) / VERTEX_STRIDE;
@@ -974,6 +1005,20 @@ Mesh_t createCubeMesh(float width, float height, float depth, Color color, GLPro
     float* tangents       = malloc(tangent_buff_size);
     int face_count        = 6;
     int vertex_per_face   = 6;
+
+
+    mesh.tangents = tangents;
+    mesh.vertices = malloc(vertCount * VERTEX_STRIDE * sizeof(float));
+
+    
+    // apply scale
+    for (int i = 0; i < vertCount; ++i) {
+        vbo_buffer[i * VERTEX_STRIDE + 0] *= width;
+        vbo_buffer[i * VERTEX_STRIDE + 1] *= height;
+        vbo_buffer[i * VERTEX_STRIDE + 2] *= depth;
+    }
+
+    memcpy(mesh.vertices, vbo_buffer, vertCount * VERTEX_STRIDE * sizeof(float));
 
     for (int i = 0; i < face_count; ++i) {
         int index = vertex_per_face * VERTEX_STRIDE * i;
@@ -999,13 +1044,6 @@ Mesh_t createCubeMesh(float width, float height, float depth, Color color, GLPro
         }
     }
 
-    // apply scale
-    for (int i = 0; i < vertCount; ++i) {
-        vbo_buffer[i * VERTEX_STRIDE + 0] *= width;
-        vbo_buffer[i * VERTEX_STRIDE + 1] *= height;
-        vbo_buffer[i * VERTEX_STRIDE + 2] *= depth;
-    }
-
     if (prog.program) {
         mesh.program = prog;
     }
@@ -1023,9 +1061,6 @@ Mesh_t createCubeMesh(float width, float height, float depth, Color color, GLPro
     glEnableVertexAttribArray(ATTRIB_TANGENT_LOCATION);
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-    if (tangents)
-        free(tangents);
 
     mesh.hasTangentAttrib = true;
     
@@ -1090,6 +1125,30 @@ Mesh_t createTriangleMesh(vec3 v1, vec3 v2, vec3 v3, Color color, GLProgram_t pr
 #   undef UV_
 }
 
+void drawArrow(vec3 position, vec3 dir, Color color) {            
+    glUseProgram(g_arrowProgram.program);
+    glUniform3f(g_arrowProgram.color_loc, color.r, color.g, color.b);
+    
+    vec3 lineEnd = vec3_add(position, vec3_scale(dir, .1f));
+
+    float data[] = {
+        position.x, position.y, position.z,
+        lineEnd.x,      lineEnd.y,      lineEnd.z,
+    };
+    
+    glBindBuffer(GL_ARRAY_BUFFER, g_arrowVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, 2 * 3 * sizeof(float), data);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    glDisable(GL_DEPTH_TEST);
+    glBindVertexArray(g_arrowVAO);
+    glDrawArrays(GL_LINE_STRIP, 0, 2);
+    glBindVertexArray(0);
+    glEnable(GL_DEPTH_TEST);
+    
+    glUseProgram(0);
+}
+
 void renderMesh(Mesh_t m, Camera_t* camera) {
     if (!m.program.program || !camera) return;
 
@@ -1138,10 +1197,37 @@ void renderMesh(Mesh_t m, Camera_t* camera) {
         glDrawArrays(GL_TRIANGLES, 0, m.vertex_count);
     }
 
+
     // clean up
     for (int i = 0; i < TEXTURE_COUNT; ++i) {
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    if (m.showTangentSpace) {
+
+        glUseProgram(g_arrowProgram.program);
+        glUniformMatrix4fv(g_arrowProgram.view_mat_loc,  1, GL_TRUE, (float*)(&camera->view_matrix));
+        glUniformMatrix4fv(g_arrowProgram.proj_mat_loc,  1, GL_TRUE, (float*)(&camera->proj_matrix));
+        glUniformMatrix4fv(g_arrowProgram.world_mat_loc, 1, GL_TRUE, (float*)(&m.localToWorld));
+        glUseProgram(0);
+
+        for (int i = 0; i < m.vertex_count; ++i) {
+            float* vertex         = &(m.vertices[i * VERTEX_STRIDE]);
+            float* tangent_vertex = &(m.tangents[3 * i]);
+
+            vec3 position   = vec3_init(vertex[0], vertex[1], vertex[2]);
+            vec3 normal     = vec3_init(vertex[3 + 0], vertex[3 + 1], vertex[3 + 2]);
+            vec3 tangent    = vec3_init(tangent_vertex[0], tangent_vertex[1], tangent_vertex[2]);
+
+            // // re-orthogonalization
+            tangent = vec3_norm(vec3_sub(tangent, vec3_scale(normal, vec3_dot(tangent, normal))));
+            vec3 bitangent = vec3_cross(normal, tangent);
+            
+            drawArrow(position, tangent,   (Color) {1.0f, 0.0f, 0.0});
+            drawArrow(position, bitangent, (Color) {0.0f, 1.0f, 0.0});
+            drawArrow(position, normal,    (Color) {0.0f, 0.0f, 1.0});
+        }   
     }
 
     glBindVertexArray(0);

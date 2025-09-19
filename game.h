@@ -9,8 +9,8 @@
 #define OPENGL_MINOR_VERSION 4
 
 #define GAME_TITLE              "Chronicles of Zarathia"
-#define CANVAS_WIDTH            (16 * 80)
-#define CANVAS_HEIGHT           (9  * 80)
+#define CANVAS_WIDTH            (16 * 90)
+#define CANVAS_HEIGHT           (9  * 90)
 
 #define AUDIO_CHANNELS          2
 #define SAMPLE_RATE             44100

@@ -36,10 +36,12 @@ MATDEF vec3 mat_transform(vec3 v, Mat4 m, float v_w);
 
 #define vec3_init(...) (vec3) {__VA_ARGS__}
 
-vec3 vec3_add(vec3 a, vec3 b);
-vec3 vec3_sub(vec3 a, vec3 b);
-vec3 vec3_norm(vec3 v);
-vec3 vec3_cross(vec3 side1, vec3 side2);
+vec3  vec3_add(vec3 a, vec3 b);
+vec3  vec3_sub(vec3 a, vec3 b);
+float vec3_dot(vec3 a, vec3 b);
+vec3  vec3_scale(vec3 a, float s);
+vec3  vec3_norm(vec3 v);
+vec3  vec3_cross(vec3 side1, vec3 side2);
 
 typedef struct Quaternion_st {
     float x, y, z, w;
@@ -323,6 +325,14 @@ vec3 vec3_sub(vec3 a, vec3 b) {
         .y = a.y - b.y,
         .z = a.z - b.z,
     };
+}
+
+float vec3_dot(vec3 a, vec3 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;  
+}
+
+vec3 vec3_scale(vec3 a, float s) {
+    return (vec3) {.x = a.x * s, .y = a.y * s, .z = a.z * s};
 }
 
 vec3 vec3_norm(vec3 v) {
